@@ -440,6 +440,15 @@ func (d IndexPageData) BackURL() string {
 	return d.URLs.Index()
 }
 
+// BackLabel names where BackURL goes: the application's list when it said where
+// that is, the overview otherwise.
+func (d IndexPageData) BackLabel() string {
+	if d.Definition != nil && d.Definition.ListURL != "" {
+		return d.Definition.Label
+	}
+	return d.Labels.T("screen.index_title")
+}
+
 // UploadHint is the line under the file box: what it takes and how much.
 func (d IndexPageData) UploadHint() string {
 	return d.Labels.F("screen.upload_hint", "mb", d.MaxMB, "rows", d.MaxRows)
