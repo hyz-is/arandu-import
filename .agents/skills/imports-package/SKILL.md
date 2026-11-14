@@ -118,6 +118,13 @@ and import `storage/framework/views/modules/imports` for its side effect. The
 files land under `resources/views/modules/imports/` and are the application's
 from then on: its layout, its page head, its words.
 
+## The name of the chosen file
+
+The upload form names the behaviour `import-file`, which the application
+registers with `arandu.ui.define` and serves from `'self'`; it writes the name of
+the chosen file in the drop area (the few lines are in the README). Without it
+the area keeps its sentence and the button still sends the file.
+
 ## Configuration
 
 | field | required | meaning |

@@ -187,7 +187,7 @@ func main() {
 			MaxMB: "10", MaxRows: 5000, Columns: columns, TemplateCSV: "/painel/importacoes/lista/modelo/csv", TemplateXLSX: "/painel/importacoes/lista/modelo/xlsx",
 			ExportURL: "/painel/importacoes/lista/exportar", CanImport: true, CanExport: true, Retention: 7, Rows: history, URL: "/painel/importacoes/lista",
 			CurrentPage: 1, Pages: 1, Total: 1, PerPage: 25, Pager: components.Paginator(nil)},
-			[]string{"Lista de permitidos", "As placas que você permite.", "enctype=\"multipart/form-data\"", "type=\"file\"", ".csv,.xlsx", "Arraste o arquivo para cá",
+			[]string{"Lista de permitidos", "As placas que você permite.", "enctype=\"multipart/form-data\"", "type=\"file\"", ".csv,.xlsx", "Arraste a planilha para cá ou clique para escolher o arquivo", "data-kyse-behavior=\"import-file\"", "w-full",
 				"CSV ou Excel (.xlsx), até 10 MB e 5000 linhas.", "Revisar arquivo", "Baixar modelo Excel", "/painel/importacoes/lista/modelo/xlsx",
 				"/painel/importacoes/lista/modelo/csv", "Placa", "obrigatória", "Exportar Excel", "Exportar CSV", "/painel/importacoes/lista/exportar",
 				"placas.xlsx", "Concluída", "/painel/importacoes/lista/r1", "Novas: 3", "_token", "Histórico", "Buscar em Histórico"}, nil},

@@ -158,7 +158,36 @@ and import the directory it wrote into, with the other imports:
 Without that import the module refuses to boot, naming the view, the command and
 the import. No script and no style is inline: the drop area is Kyse's
 `file-upload` behaviour and the progress follows with htmx, both served from
-`'self'`.
+`'self'`. The file is sent by the button under the area, after its name is shown.
+
+## The name of the chosen file
+
+The drop area is Kyse's `file-upload`: it takes a dropped or a picked file into
+the real file input and says nothing more. The upload form names a behaviour of
+its own, `import-file`, that writes the name of the chosen file in the area. The
+behaviour is the application's, served from `'self'` with the rest of its
+scripts, and a page without it is the page that always was (the area keeps its
+sentence and the button submits):
+
+```js
+arandu.ui.define('import-file', {
+	mounted: function (ctx) {
+		var input = ctx.element.querySelector('input[type="file"]');
+		var prompt = ctx.element.querySelector('[data-part="prompt"]');
+		if (!input || !prompt) return;
+		var said = prompt.textContent;
+		ctx.show = function () {
+			var file = input.files && input.files[0];
+			prompt.textContent = file ? file.name : said;
+		};
+		input.addEventListener('change', ctx.show);
+	},
+	destroyed: function (ctx) {
+		var input = ctx.element.querySelector('input[type="file"]');
+		if (input && ctx.show) input.removeEventListener('change', ctx.show);
+	}
+});
+```
 
 ## Configuration
 

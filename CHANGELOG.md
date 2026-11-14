@@ -10,8 +10,17 @@ a release is corrected by another release and never by moving a tag.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-14
+
 ### Changed
 
+- The drop area of the published upload screen fills the width of its card
+  (Kyse's `.file-upload` sets none, so the view gives the part `w-full`) and says
+  a whole sentence, "Arraste a planilha para cá ou clique para escolher o
+  arquivo" (`screen.upload_prompt`), in `pt-BR` and `en`.
+- A chosen file is no longer sent at once: the area names it (the `import-file`
+  behaviour of the upload form, which the application registers; the README has
+  its few lines) and the "Revisar arquivo" button sends it.
 - The published preview lists the first rows without a column of reasons (the
   refused rows have their own list under it), and the history of one definition
   names the kind of run instead of repeating the definition.
