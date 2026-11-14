@@ -166,7 +166,7 @@ default visible there:
 
 ```go
 var runTable = model.NewTable(model.TableSpec{
-	Name:      "importss",
+	Name:      "import_runs",
 	New:       func() model.Entity { return new(Run) },
 	ManualKey: true,
 })
