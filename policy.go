@@ -3,81 +3,85 @@ package imports
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/arandu-io/framework/security"
+	"github.com/arandu-io/hesape/auth"
 )
 
-// The actions of Imports. Constants rather than strings at the call site: a
-// typo in an action name would silently authorize nothing, or worse, everything.
+// The package owns no action of its own that a subject has to be given: what
+// may be imported or exported is decided by the actions each Definition names,
+// which are the application's, given to subjects by its permission module. The
+// policy below answers about them.
 //
-// They carry the entity in the name because an application registers many
-// packages, and the name of an action shows up in logs and in audit trails
-// where "view" on its own says nothing about what was viewed.
-const (
-	// ImportsView is reading one record.
-	ImportsView security.Action = "imports.view"
-	// ImportsList is paging through the records.
-	ImportsList security.Action = "imports.list"
-	// ImportsCreate is adding one.
-	ImportsCreate security.Action = "imports.create"
-	// ImportsUpdate is changing one.
-	ImportsUpdate security.Action = "imports.update"
-	// ImportsDelete is removing one.
-	ImportsDelete security.Action = "imports.delete"
+// A subject that holds a Definition's ImportAction may import with it, see its
+// runs and download its reports. A subject that holds its ExportAction may
+// export, see the exports and download them.
+
+// viewPrefix turns a Definition's action into the action that only reads it.
+//
+// A Grant issued for an action the policy says does not write cannot save a
+// row, store a file or queue a job. The listing of runs and the download of a
+// report are issued for the read form, so a bug on those paths cannot start an
+// import. The subject is asked about the Definition's own action either way.
+const viewPrefix = "imports.view:"
+
+// viewOf is the read form of a Definition's action.
+func viewOf(a security.Action) security.Action { return security.Action(viewPrefix) + a }
+
+// baseOf is the action a subject has to hold for a, and whether a is one.
+func baseOf(a security.Action) security.Action {
+	return security.Action(strings.TrimPrefix(string(a), viewPrefix))
+}
+
+// reads says a is a read form.
+func reads(a security.Action) bool { return strings.HasPrefix(string(a), viewPrefix) }
+
+// RunPolicy decides about the runs of the Definitions it was built over.
+type RunPolicy struct {
+	actions map[security.Action]bool
+}
+
+var (
+	_ security.Policy[Run] = RunPolicy{}
+	_ auth.Writes          = RunPolicy{}
 )
 
-// ImportsPolicy is the only authority over who does what with a Imports.
-//
-// IT DENIES EVERYTHING, and that is the state to start from rather than a
-// placeholder to delete. A policy shipped with a branch that allows every
-// action is a hole in every application that installs the package, and the hole
-// looks like working code until somebody reads it.
-//
-// There is deliberately no such branch to remove. Open one action at a time,
-// inside the custom block below, saying who may take it and on which record --
-// what is not written there stays closed, including every action added later.
-type ImportsPolicy struct{}
-
-// Compile-time proof that the policy answers about this entity and no other. A
-// policy that drifted onto another type would leave this one unguarded while
-// the Model path still compiled.
-var _ security.Policy[Imports] = ImportsPolicy{}
-
-// Can decides whether the subject may perform the action on the record.
-//
-// It is the only place that decides. The service reaches the Model only after
-// Authorize turns this method's nil result into a Grant.
-func (ImportsPolicy) Can(ctx context.Context, s security.Subject, a security.Action, record Imports) error {
-	// Tenant isolation comes first and applies to every action. Without it every
-	// check below would be pointless in a multi-tenant system: a rule that
-	// allows an owner to read their own record would allow it across customers
-	// as soon as two of them have a record with the same identifier.
-	//
-	// The empty id is the candidate that has not been stored yet, which belongs
-	// to nobody until it is written with the tenant off the Grant.
-	if record.ID != "" && record.TenantID != s.Tenant {
-		return fmt.Errorf("imports belongs to another tenant")
+// NewRunPolicy builds the policy over the actions of the definitions: an action
+// no Definition names is refused, whoever holds it.
+func NewRunPolicy(defs []Definition) RunPolicy {
+	known := map[security.Action]bool{}
+	for _, d := range defs {
+		if d.CanImport() {
+			known[d.ImportAction] = true
+		}
+		if d.CanExport() {
+			known[d.ExportAction] = true
+		}
 	}
+	return RunPolicy{actions: known}
+}
 
-	// arandu:begin custom
-	// The rules of this package go here, one action at a time. A rule that
-	// depends on the record and not only on the role is written the same way:
-	//
-	//	if a == ImportsView && (s.ID == record.ID || s.HasRole("admin")) {
-	//		return nil
-	//	}
-	//
-	// The routes of this package sit behind RequireAuth, so none of them asks
-	// about a guest. An application that calls the service from a public route
-	// of its own may, with security.Guest: a reader it declared anonymous on
-	// purpose, and the only subject that arrives without an id. Answer it
-	// explicitly or it falls through to the refusal below, which is the safe
-	// direction:
-	//
-	//	if a == ImportsView && s.IsGuest() && record.Published {
-	//		return nil
-	//	}
-	// arandu:end custom
+// Writes reports whether an action changes anything: every one but the read
+// forms.
+func (RunPolicy) Writes(a security.Action) bool { return !reads(a) }
 
-	return fmt.Errorf("no rule allows %s on imports", a)
+// Can decides. It denies by default and has one rule that allows: the subject
+// holds the Definition's action and the run, when there is one, is in the
+// subject's own tenant.
+func (p RunPolicy) Can(_ context.Context, s security.Subject, a security.Action, record Run) error {
+	if record.ID != "" && record.TenantID != s.Tenant {
+		return fmt.Errorf("the run belongs to another tenant")
+	}
+	if s.IsGuest() {
+		return fmt.Errorf("a guest runs no import")
+	}
+	base := baseOf(a)
+	if !p.actions[base] {
+		return fmt.Errorf("no definition declares %s", base)
+	}
+	if !s.Can(base) {
+		return fmt.Errorf("the subject was not granted %s", base)
+	}
+	return nil
 }
