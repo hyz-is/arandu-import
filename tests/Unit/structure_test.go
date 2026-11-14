@@ -112,27 +112,27 @@ func TestThePackageUsesTheGeneratedConcreteModel(t *testing.T) {
 	wants := map[string][]string{
 		"model.go": {
 			`"github.com/arandu-io/hesape/database/model"`,
-			"type Imports struct {\n\tmodel.Model\n",
-			"var importsTable = model.NewTable(model.TableSpec{",
+			"type Run struct {\n\tmodel.Model\n",
+			"var runTable = model.NewTable(model.TableSpec{",
 			"ManualKey: true,",
 			"// arandu:begin custom\n",
 			"// arandu:end custom\n",
 		},
-		"ImportsQuery.go": {
+		"RunQuery.go": {
 			generatedHeading,
-			"func Importss(db model.DB) *ImportsQuery",
-			"type ImportsCollection []*Imports",
+			"func Runs(db model.DB) *RunQuery",
+			"type RunCollection []*Run",
 		},
 		"service.go": {
 			"db     *data.DB",
-			"func NewImportsService(db *data.DB) *ImportsService",
-			"Importss(s.db).New()",
-			"Importss(s.db).WhereKey(",
-			") (*Imports, error)",
-			") ([]*Imports, error)",
+			"func NewService(db *data.DB, cfg Config) *Service",
+			"Runs(s.db).New()",
+			"Runs(s.db).WhereKey(",
+			") (*Run, error)",
+			") (Page, error)",
 		},
 		"module.go": {
-			"NewImportsService(db)",
+			"NewService(db, cfg)",
 		},
 	}
 	for path, required := range wants {
@@ -172,8 +172,8 @@ func TestThePackageUsesTheGeneratedConcreteModel(t *testing.T) {
 				t.Errorf("%s still spells the generic model layer %q", filepath.ToSlash(relative), stale)
 			}
 		}
-		if relative != "ImportsQuery.go" && strings.Contains(string(body), generatedHeading) {
-			t.Errorf("%s carries the heading of the generated query, which only ImportsQuery.go may", filepath.ToSlash(relative))
+		if relative != "RunQuery.go" && strings.Contains(string(body), generatedHeading) {
+			t.Errorf("%s carries the heading of the generated query, which only RunQuery.go may", filepath.ToSlash(relative))
 		}
 		return nil
 	})
@@ -191,13 +191,13 @@ func TestTheGuidesTeachTheGeneratedModelBoundary(t *testing.T) {
 
 	root := packageRoot(t)
 	guides := map[string][]string{
-		"AGENTS.md":                               {"Importss(db)", "security.Authorize"},
-		"README.md":                               {"Importss(db)", "ImportsQuery", "aru model:build", "RequireAuth"},
-		"CONTRIBUTING.md":                         {"Importss(db)", "authorizes before reaching the Model", "aru model:build"},
+		"AGENTS.md":                               {"Runs(db)", "security.Authorize"},
+		"README.md":                               {"Runs(db)", "RunQuery", "aru model:build", "RequireAuth"},
+		"CONTRIBUTING.md":                         {"Runs(db)", "authorizes before reaching the Model", "aru model:build"},
 		"SECURITY.md":                             {"Model terminal", "data.Tenant(g)"},
-		".agents/skills/README.md":                {"ImportsQuery", "custom block"},
-		".agents/skills/imports-module/SKILL.md":  {"importsTable", "ctx.User()", "RequireAuth", "return err"},
-		".agents/skills/imports-policy/SKILL.md":  {"security.Authorize", "Importss(s.db).New()"},
+		".agents/skills/README.md":                {"RunQuery", "custom block"},
+		".agents/skills/imports-module/SKILL.md":  {"runTable", "ctx.User()", "RequireAuth", "return err"},
+		".agents/skills/imports-policy/SKILL.md":  {"security.Authorize", "Runs(s.db).New()"},
 		".agents/skills/imports-release/SKILL.md": {"model:build --check", "configured copy"},
 		".agents/skills/imports-package/SKILL.md": {"RequireAuth", "/auth/login"},
 	}
@@ -239,20 +239,17 @@ func TestTheGuidesTeachTheGeneratedModelBoundary(t *testing.T) {
 func TestHandlersLeaveTheSubjectAndTheStatusToTheFramework(t *testing.T) {
 	t.Parallel()
 
-	path := filepath.Join(packageRoot(t), "module.go")
-	file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+	root := packageRoot(t)
+	file, err := parser.ParseFile(token.NewFileSet(), filepath.Join(root, "module.go"), nil, 0)
 	if err != nil {
 		t.Fatalf("parsing module.go: %v", err)
 	}
-
-	methods := map[string]*ast.FuncDecl{}
+	var routes *ast.FuncDecl
 	for _, declaration := range file.Decls {
-		function, ok := declaration.(*ast.FuncDecl)
-		if ok && receiverType(function) == "Module" {
-			methods[function.Name.Name] = function
+		if function, ok := declaration.(*ast.FuncDecl); ok && receiverType(function) == "Module" && function.Name.Name == "Routes" {
+			routes = function
 		}
 	}
-	routes := methods["Routes"]
 	if routes == nil {
 		t.Fatal("Module has no Routes method")
 	}
@@ -275,28 +272,65 @@ func TestHandlersLeaveTheSubjectAndTheStatusToTheFramework(t *testing.T) {
 	})
 	if guarded == token.NoPos {
 		t.Error("Routes mounts no RequireAuth, so a request with no session reaches the handlers")
-	} else if registered != token.NoPos && guarded > registered {
+	} else if registered == token.NoPos {
+		t.Error("Routes registers no route")
+	} else if guarded > registered {
 		t.Error("Routes registers a route before it mounts RequireAuth")
 	}
 
-	// Nothing in the module loads the session: the guard already did.
-	ast.Inspect(file, func(node ast.Node) bool {
-		call, ok := node.(*ast.CallExpr)
-		if ok && selectorName(call.Fun) == "Load" {
-			t.Errorf("module.go calls %s, loading the session RequireAuth already loaded; read ctx.User instead",
-				spelled(call.Fun))
+	// Nothing in the module loads the session: the guard already did. The
+	// generated query and the catalogue loader have a Load of their own.
+	for _, source := range productionGoFiles(t, root) {
+		if base := filepath.Base(source.path); base != "module.go" && base != "handlers.go" {
+			continue
+		}
+		ast.Inspect(source.file, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if ok && selectorName(call.Fun) == "Load" {
+				t.Errorf("%s calls %s, loading the session RequireAuth already loaded; read ctx.User instead",
+					source.path, spelled(call.Fun))
+			}
+			return true
+		})
+	}
+
+	handlersFile, err := parser.ParseFile(token.NewFileSet(), filepath.Join(root, "handlers.go"), nil, 0)
+	if err != nil {
+		t.Fatalf("parsing handlers.go: %v", err)
+	}
+	methods := map[string]*ast.FuncDecl{}
+	var table *ast.FuncDecl
+	for _, declaration := range handlersFile.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if !ok || receiverType(function) != "Module" {
+			continue
+		}
+		methods[function.Name.Name] = function
+		if function.Name.Name == "handlers" {
+			table = function
+		}
+	}
+	if table == nil {
+		t.Fatal("Module has no handlers table")
+	}
+	registeredNames := map[string]bool{}
+	ast.Inspect(table.Body, func(node ast.Node) bool {
+		pair, ok := node.(*ast.KeyValueExpr)
+		if !ok {
+			return true
+		}
+		if selector, ok := pair.Value.(*ast.SelectorExpr); ok {
+			registeredNames[selector.Sel.Name] = true
 		}
 		return true
 	})
-
-	handlers := registeredHandlers(routes)
-	if len(handlers) == 0 {
-		t.Fatal("Routes registers no Module handler")
+	if len(registeredNames) == 0 {
+		t.Fatal("the handlers table registers no Module handler")
 	}
-	for name := range handlers {
+	for name := range registeredNames {
 		handler := methods[name]
 		if handler == nil {
-			t.Errorf("Routes registers Module.%s, but no such method exists", name)
+			t.Errorf("the table registers Module.%s, but no such method exists", name)
 			continue
 		}
 		readsUser := false
@@ -500,14 +534,38 @@ func inspectServiceBoundary(t *testing.T, root string) {
 		t.Fatal("Module has no Routes method")
 	}
 
-	handlers := registeredHandlers(routes)
+	// The handlers live in handlers.go and are registered by name through the
+	// table its handlers method returns, which Routes reads.
+	handlersFile, err := parser.ParseFile(token.NewFileSet(), filepath.Join(root, "handlers.go"), nil, 0)
+	if err != nil {
+		t.Fatalf("parsing handlers.go: %v", err)
+	}
+	handlers := map[string]bool{}
+	for _, declaration := range handlersFile.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if !ok || receiverType(function) != "Module" {
+			continue
+		}
+		methods[function.Name.Name] = function
+		if function.Name.Name != "handlers" {
+			continue
+		}
+		ast.Inspect(function.Body, func(node ast.Node) bool {
+			if pair, ok := node.(*ast.KeyValueExpr); ok {
+				if selector, ok := pair.Value.(*ast.SelectorExpr); ok {
+					handlers[selector.Sel.Name] = true
+				}
+			}
+			return true
+		})
+	}
 	if len(handlers) == 0 {
-		t.Fatal("Routes registers no Module handler")
+		t.Fatal("the handlers table registers no Module handler")
 	}
 	for name := range handlers {
 		handler := methods[name]
 		if handler == nil {
-			t.Errorf("Routes registers Module.%s, but no such method exists", name)
+			t.Errorf("the handlers table registers Module.%s, but no such method exists", name)
 			continue
 		}
 

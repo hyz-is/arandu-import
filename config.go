@@ -184,18 +184,18 @@ type Change struct {
 // Paths are the segments of the routes under Prefix, so an application that
 // speaks another language renames them without touching the package.
 type Paths struct {
-	Template, Export, Progress, Confirm, Discard, Refused, File string
+	Runs, Template, Export, Progress, Confirm, Discard, Refused, File string
 }
 
 // DefaultPaths are the segments in English.
 var DefaultPaths = Paths{
-	Template: "/template", Export: "/export", Progress: "/progress", Confirm: "/confirm",
+	Runs: "/runs", Template: "/template", Export: "/export", Progress: "/progress", Confirm: "/confirm",
 	Discard: "/discard", Refused: "/refused", File: "/file",
 }
 
 // PortuguesePaths are the segments in Brazilian Portuguese.
 var PortuguesePaths = Paths{
-	Template: "/modelo", Export: "/exportar", Progress: "/progresso", Confirm: "/confirmar",
+	Runs: "/execucoes", Template: "/modelo", Export: "/exportar", Progress: "/progresso", Confirm: "/confirmar",
 	Discard: "/descartar", Refused: "/recusadas", File: "/arquivo",
 }
 
@@ -207,7 +207,7 @@ func (p *Paths) fields() []struct {
 		name  string
 		value *string
 	}{
-		{"Template", &p.Template}, {"Export", &p.Export}, {"Progress", &p.Progress}, {"Confirm", &p.Confirm},
+		{"Runs", &p.Runs}, {"Template", &p.Template}, {"Export", &p.Export}, {"Progress", &p.Progress}, {"Confirm", &p.Confirm},
 		{"Discard", &p.Discard}, {"Refused", &p.Refused}, {"File", &p.File},
 	}
 }
@@ -361,7 +361,7 @@ type route struct {
 // the prefix and the URL builders all read it.
 func routeTable(c Config) []route {
 	p, s := c.Prefix, c.Paths
-	run := p + "/{definition}/{id}"
+	run := p + "/{definition}" + s.Runs + "/{id}"
 	return []route{
 		{"imports.index", http.MethodGet, p},
 		{"imports.new", http.MethodGet, p + "/{definition}"},

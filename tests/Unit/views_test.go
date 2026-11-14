@@ -13,6 +13,7 @@ import (
 	"github.com/arandu-io/framework/data"
 	"github.com/arandu-io/framework/foundation"
 	"github.com/arandu-io/framework/security"
+	"github.com/arandu-io/hesape/queue"
 	"github.com/arandu-io/hesape/view"
 
 	imports "github.com/hyz-is/arandu-import"
@@ -44,7 +45,8 @@ func module(t *testing.T) *imports.Module {
 	t.Helper()
 
 	sessions := security.NewSessionStore([]byte(sessionKey), time.Hour, false, security.NewMemoryBackend())
-	m, err := imports.New(imports.Config{}, data.Wrap(nil, data.DialectSQLite), sessions)
+	db := data.Wrap(nil, data.DialectSQLite)
+	m, err := imports.New(imports.Config{Definitions: definitions(), Files: disk(t), Queue: queue.NewDatabaseQueue(db)}, db, sessions)
 	if err != nil {
 		t.Fatalf("building the module: %v", err)
 	}

@@ -60,7 +60,7 @@ func itoa(n int) string { return imports.Itoa(n) }
 			</dl>
 			<div class="grid gap-2 text-sm">
 				<h3 class="font-semibold">{{ .Labels.T("screen.recognized") }}</h3>
-				<p class="text-muted-foreground">@if(.Header){{ .Labels.T("screen.preview_header_yes") }}@else{{ .Labels.T("screen.preview_header_no") }}@endif</p>
+				<p class="text-muted-foreground">{{ .HeaderNote() }}</p>
 				<ul class="grid gap-1">
 					@foreach(.Mapped as column)
 						<li>

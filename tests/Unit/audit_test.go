@@ -148,17 +148,28 @@ func firstCallTo(body *ast.BlockStmt, name string) token.Pos {
 func TestEveryServiceMethodAuthorizesBeforeTheModel(t *testing.T) {
 	t.Parallel()
 
+	// Clean runs from the scheduler under the one action nothing else is issued
+	// (a system grant in the tenant of each run it reaches, declared where it is
+	// made), and Template writes a file out of the definition alone and reaches
+	// no row. Neither has a subject to ask a Policy about, or a Model to order.
+	exempt := map[string]bool{"Clean": true, "Template": true}
+
 	audited := 0
 	for _, source := range auditedFiles(t) {
 		for _, declaration := range source.file.Decls {
 			function, ok := declaration.(*ast.FuncDecl)
-			if !ok || function.Body == nil || receiverType(function) != "ImportsService" ||
-				!function.Name.IsExported() {
+			if !ok || function.Body == nil || receiverType(function) != "Service" ||
+				!function.Name.IsExported() || exempt[function.Name.Name] {
 				continue
 			}
 			audited++
 
+			// authorizeView is the Service's own wrapper over security.Authorize for
+			// the read forms; it is the call that decides in Find and Open.
 			decided := firstCallTo(function.Body, "Authorize")
+			if wrapped := firstCallTo(function.Body, "authorizeView"); wrapped != token.NoPos && (decided == token.NoPos || wrapped < decided) {
+				decided = wrapped
+			}
 			reach := firstModelReach(function.Body)
 			if decided == token.NoPos {
 				t.Errorf("%s: %s never calls security.Authorize, so no Policy decided whether the Model may run",
@@ -175,12 +186,12 @@ func TestEveryServiceMethodAuthorizesBeforeTheModel(t *testing.T) {
 		}
 	}
 	if audited == 0 {
-		t.Fatal("no exported ImportsService method was found, so this test proved nothing")
+		t.Fatal("no exported Service method was found, so this test proved nothing")
 	}
 }
 
 // firstModelReach is where a Service first constructs the generated query or
-// calls a promoted write terminal. Importss itself counts: moving only its
+// calls a promoted write terminal. Runs itself counts: moving only its
 // construction before Authorize is the mutation this audit exists to reject.
 func firstModelReach(body *ast.BlockStmt) token.Pos {
 	terminals := map[string]bool{
@@ -193,7 +204,8 @@ func firstModelReach(body *ast.BlockStmt) token.Pos {
 			return true
 		}
 		name := calledName(call)
-		if name != "Importss" && !terminals[name] {
+		// seen is the Service's lookup of one run by id, which builds the query.
+		if name != "Runs" && name != "seen" && name != "owned" && !terminals[name] {
 			return true
 		}
 		if found == token.NoPos || call.Pos() < found {
@@ -258,7 +270,7 @@ func TestTheServiceWritesTenantOnlyFromTheGrant(t *testing.T) {
 	for _, source := range auditedFiles(t) {
 		for _, declaration := range source.file.Decls {
 			function, ok := declaration.(*ast.FuncDecl)
-			if !ok || function.Body == nil || receiverType(function) != "ImportsService" {
+			if !ok || function.Body == nil || receiverType(function) != "Service" {
 				continue
 			}
 			ast.Inspect(function.Body, func(node ast.Node) bool {

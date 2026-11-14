@@ -29,6 +29,11 @@ const viewPrefix = "imports.view:"
 // viewOf is the read form of a Definition's action.
 func viewOf(a security.Action) security.Action { return security.Action(viewPrefix) + a }
 
+// ViewOf is the read form of a Definition's action: the action the package
+// authorizes to look at a run or a report. It is exported so an application can
+// ask its own policy tests what the package asks.
+func ViewOf(a security.Action) security.Action { return viewOf(a) }
+
 // baseOf is the action a subject has to hold for a, and whether a is one.
 func baseOf(a security.Action) security.Action {
 	return security.Action(strings.TrimPrefix(string(a), viewPrefix))

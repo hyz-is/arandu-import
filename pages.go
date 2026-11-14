@@ -57,7 +57,9 @@ func (u URLs) Template(key, format string) string {
 func (u URLs) Export(key string) string { return u.Definition(key) + u.cfg.Paths.Export }
 
 // Run is the page of one run.
-func (u URLs) Run(key, id string) string { return u.Definition(key) + "/" + url.PathEscape(id) }
+func (u URLs) Run(key, id string) string {
+	return u.Definition(key) + u.cfg.Paths.Runs + "/" + url.PathEscape(id)
+}
 
 // Progress is the fragment of a run's state, which the page asks for again
 // while the run is going.
@@ -208,6 +210,8 @@ type DefinitionView struct {
 type ColumnView struct {
 	Label, Hint string
 	Required    bool
+	// Mark says "required" or "optional", in the screen's language.
+	Mark string
 }
 
 // RunRow is a run as a screen shows it.
@@ -487,4 +491,12 @@ func (d ShowPageData) ProgressLead() string {
 // ExportDoneLead says what a finished export holds and how long it is kept.
 func (d ShowPageData) ExportDoneLead() string {
 	return d.Labels.F("screen.done_export_lead", "rows", d.Run.Total, "days", d.Retention)
+}
+
+// HeaderNote says how the first row of the file was read.
+func (d ShowPageData) HeaderNote() string {
+	if d.Header {
+		return d.Labels.T("screen.preview_header_yes")
+	}
+	return d.Labels.T("screen.preview_header_no")
 }

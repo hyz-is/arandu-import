@@ -46,7 +46,12 @@ func (m *Module) handlers() map[string]func(*fhttp.Context) error {
 // of the space.
 func (m *Module) index(ctx *fhttp.Context) error {
 	who, _ := ctx.User()
-	return m.listPage(ctx, who, nil)
+	p := listParams(ctx)
+	page, err := m.service.List(ctx.Ctx(), who, p.query("", m.cfg.PageSize))
+	if err != nil {
+		return err
+	}
+	return m.listPage(ctx, who, nil, p, page)
 }
 
 // definitionPage is the page of one definition.
@@ -56,19 +61,20 @@ func (m *Module) definitionPage(ctx *fhttp.Context) error {
 	if err != nil {
 		return err
 	}
-	return m.listPage(ctx, who, &def)
-}
-
-func (m *Module) listPage(ctx *fhttp.Context, who security.Subject, def *Definition) error {
 	p := listParams(ctx)
-	q := ListQuery{Search: p.search, Statuses: p.statuses, Sort: p.sort, Dir: p.dir, Page: p.page, PerPage: m.cfg.PageSize}
-	if def != nil {
-		q.Definition = def.Key
-	}
-	page, err := m.service.List(ctx.Ctx(), who, q)
+	page, err := m.service.List(ctx.Ctx(), who, p.query(def.Key, m.cfg.PageSize))
 	if err != nil {
 		return err
 	}
+	return m.listPage(ctx, who, &def, p, page)
+}
+
+// query is the history a page asks for.
+func (p params) query(definition string, perPage int) ListQuery {
+	return ListQuery{Definition: definition, Search: p.search, Statuses: p.statuses, Sort: p.sort, Dir: p.dir, Page: p.page, PerPage: perPage}
+}
+
+func (m *Module) listPage(ctx *fhttp.Context, who security.Subject, def *Definition, p params, page Page) error {
 	if ctx.WantsJSON() {
 		items := make([]map[string]any, 0, len(page.Rows))
 		for _, run := range page.Rows {

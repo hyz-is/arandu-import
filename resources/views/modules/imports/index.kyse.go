@@ -115,7 +115,7 @@ func runsTable(data IndexData) components.DataTableProps {
 					@foreach(.Columns as column)
 						<li>
 							<span class="font-medium">{{ column.Label }}</span>
-							<span class="text-muted-foreground">· @if(column.Required){{ .Labels.T("screen.required") }}@else{{ .Labels.T("screen.optional") }}@endif</span>
+							<span class="text-muted-foreground">· {{ column.Mark }}</span>
 							@if(column.Hint != "")
 								<span class="text-muted-foreground block">{{ column.Hint }}</span>
 							@endif

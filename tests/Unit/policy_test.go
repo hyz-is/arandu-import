@@ -3,315 +3,187 @@ package unit_test
 import (
 	"context"
 	"errors"
-	"slices"
 	"strings"
 	"testing"
 
 	"github.com/arandu-io/framework/data"
 	"github.com/arandu-io/framework/security"
-	"github.com/arandu-io/hesape/database/model"
-	"github.com/arandu-io/hesape/database/query"
+	"github.com/arandu-io/hesape/filesystem"
+	"github.com/arandu-io/hesape/queue"
 
 	imports "github.com/hyz-is/arandu-import"
 )
 
-// The four properties this package exists to keep are checked here, and they
-// are checked against the code rather than described in a document:
+// The properties this package exists to keep are checked here against the code:
 //
-//  1. the policy denies every action, and has no branch that allows one;
+//  1. the policy denies every action it was not told about, and an action it
+//     was told about needs the subject to hold it;
 //  2. the service authorizes before constructing or running the generated query;
 //  3. the tenant comes from the Grant;
 //  4. nothing reaches the database without passing through the first two.
 //
 // The fourth is checked by the handle these tests pass in. It wraps a nil
 // *sql.DB, so any statement that were issued would panic and fail the test
-// loudly -- which makes "the refusal happened before the Model" a fact the
-// suite proves rather than a comment. The structural twin in audit_test.go
-// keeps that order visible on every service method, including an allowed path.
+// loudly.
 
-// everyAction is the whole set the policy answers about. A test that listed
-// four of five would pass while the fifth was open.
-var everyAction = []security.Action{
-	imports.ImportsView,
-	imports.ImportsList,
-	imports.ImportsCreate,
-	imports.ImportsUpdate,
-	imports.ImportsDelete,
+const (
+	importAction security.Action = "plates.import"
+	exportAction security.Action = "plates.export"
+)
+
+// definitions is the smallest registration that is a valid one: it imports and
+// exports.
+func definitions() []imports.Definition {
+	return []imports.Definition{{
+		Key: "plates", Label: "Plates",
+		Columns:      []imports.Column{{Key: "plate", Label: "Plate", Required: true}, {Key: "note", Label: "Note"}},
+		ImportAction: importAction, ExportAction: exportAction,
+		Write: func(context.Context, security.Grant, imports.Row) (imports.Outcome, error) {
+			return imports.Created, nil
+		},
+		Export: &imports.Export{
+			Each: func(context.Context, security.Grant, func(imports.Row) error) error { return nil },
+		},
+	}}
 }
 
-// administrator is the most privileged subject an application can produce. It
-// is the one to test the default with: a policy that refuses an administrator
-// refuses everyone.
-func administrator() security.Subject {
-	return security.Subject{ID: "user-1", Tenant: "acme", Roles: []string{"admin"}, Verified: true}
-}
+func nilHandle() *data.DB { return data.Wrap(nil, data.DialectSQLite) }
 
-func TestThePolicyDeniesEveryActionByDefault(t *testing.T) {
-	t.Parallel()
-
-	for _, action := range everyAction {
-		t.Run(string(action), func(t *testing.T) {
-			t.Parallel()
-
-			_, err := security.Authorize(context.Background(), imports.ImportsPolicy{},
-				administrator(), action, imports.Imports{})
-			if !errors.Is(err, security.ErrForbidden) {
-				t.Fatalf("an unopened policy allowed %s: got %v, want ErrForbidden", action, err)
-			}
-		})
+func disk(t *testing.T) *filesystem.Disk {
+	t.Helper()
+	adapter, err := filesystem.NewLocalFilesystemAdapter(t.TempDir())
+	if err != nil {
+		t.Fatalf("building a local Disk: %v", err)
 	}
+	return filesystem.NewDisk("imports", adapter)
 }
 
-func TestThePolicyDeniesARecordOfAnotherTenant(t *testing.T) {
-	t.Parallel()
-
-	other := imports.Imports{ID: "record-1", TenantID: "globex", Name: "theirs"}
-
-	err := imports.ImportsPolicy{}.Can(context.Background(),
-		administrator(), imports.ImportsView, other)
-	if err == nil {
-		t.Fatal("the policy allowed a record belonging to another tenant")
-	}
-	// The message is asserted because the tenant check is the one refusal that
-	// has to survive somebody opening the actions below it.
-	if !strings.Contains(err.Error(), "another tenant") {
-		t.Fatalf("the refusal did not name the tenant: %v", err)
-	}
+func serviceOver(t *testing.T, db *data.DB) *imports.Service {
+	t.Helper()
+	return imports.NewService(db, imports.Config{Definitions: definitions(), Files: disk(t)})
 }
 
-func TestThePolicyDeniesAGuest(t *testing.T) {
-	t.Parallel()
+func holder(actions ...security.Action) security.Subject {
+	return security.Subject{ID: "user-1", Tenant: "acme", Roles: []string{"admin"}, Actions: actions, Verified: true}
+}
 
-	for _, action := range everyAction {
-		_, err := security.Authorize(context.Background(), imports.ImportsPolicy{},
-			security.Guest("acme"), action, imports.Imports{})
-		if !errors.Is(err, security.ErrForbidden) {
-			t.Fatalf("a guest was allowed %s: got %v, want ErrForbidden", action, err)
+func TestThePolicyDeniesWhatNoDefinitionDeclares(t *testing.T) {
+	t.Parallel()
+	policy := imports.NewRunPolicy(definitions())
+	ctx := context.Background()
+
+	// An administrator by role holds no action it was not given.
+	for _, a := range []security.Action{"plates.delete", "imports.clean", "anything"} {
+		if _, err := security.Authorize(ctx, policy, holder(a), a, imports.Run{}); !errors.Is(err, security.ErrForbidden) {
+			t.Errorf("an action no definition declares (%s) was not refused: %v", a, err)
 		}
 	}
-}
-
-func TestAuthorizeRefusesASubjectThatIsNobody(t *testing.T) {
-	t.Parallel()
-
-	// The zero Subject is a session that failed to load, not an anonymous
-	// reader, and it is refused before the policy is consulted. A package that
-	// answered it as a guest would answer a broken session as a visitor.
-	_, err := security.Authorize(context.Background(), imports.ImportsPolicy{},
-		security.Subject{}, imports.ImportsView, imports.Imports{})
-	if !errors.Is(err, security.ErrForbidden) {
-		t.Fatalf("an empty subject was authorized: got %v, want ErrForbidden", err)
+	if _, err := security.Authorize(ctx, policy, holder(), importAction, imports.Run{}); !errors.Is(err, security.ErrForbidden) {
+		t.Errorf("a declared action the subject does not hold was not refused: %v", err)
+	}
+	if _, err := security.Authorize(ctx, policy, holder(importAction), importAction, imports.Run{}); err != nil {
+		t.Errorf("the subject holds the action and was refused: %v", err)
+	}
+	if _, err := security.Authorize(ctx, policy, holder(importAction), exportAction, imports.Run{}); !errors.Is(err, security.ErrForbidden) {
+		t.Errorf("holding the import action opened the export one: %v", err)
 	}
 }
 
-// nilHandle is a handle over no database.
-//
-// Any statement issued through it panics, which is what makes these tests
-// prove that the refusal came first: a service that reached the Model before
-// authorizing would crash here rather than pass.
-func nilHandle() *data.DB { return data.Wrap(nil, data.DialectSQLite) }
+func TestThePolicyDeniesARunOfAnotherTenantAndAGuest(t *testing.T) {
+	t.Parallel()
+	policy := imports.NewRunPolicy(definitions())
+	ctx := context.Background()
+
+	other := imports.Run{ID: "r1", TenantID: "globex"}
+	if _, err := security.Authorize(ctx, policy, holder(importAction), importAction, other); !errors.Is(err, security.ErrForbidden) {
+		t.Errorf("a run of another tenant was not refused: %v", err)
+	}
+	if _, err := security.Authorize(ctx, policy, security.Guest("acme"), importAction, imports.Run{}); !errors.Is(err, security.ErrForbidden) {
+		t.Errorf("a guest was not refused: %v", err)
+	}
+}
+
+func TestOnlyTheReadFormsOfAnActionAreReadOnly(t *testing.T) {
+	t.Parallel()
+	policy := imports.NewRunPolicy(definitions())
+	if !policy.Writes(importAction) || !policy.Writes(exportAction) {
+		t.Error("starting an import or an export was said not to write")
+	}
+	if policy.Writes(imports.ViewOf(importAction)) || policy.Writes(imports.ViewOf(exportAction)) {
+		t.Error("looking at a run was said to write")
+	}
+}
 
 func TestTheServiceRefusesBeforeReachingTheModel(t *testing.T) {
 	t.Parallel()
-
-	// A nil handle makes even construction of Importss panic, at the
-	// GetQueryGrammar the query asks the handle for. This catches moving the
-	// generated query constructor -- not only its terminal -- ahead of
-	// authorization.
-	service := imports.NewImportsService(nil)
 	ctx := context.Background()
+	s := serviceOver(t, nilHandle())
+	nobody := holder()
 
-	if _, err := service.Find(ctx, administrator(), "record-1"); !errors.Is(err, security.ErrForbidden) {
-		t.Fatalf("Find reached the Model before the policy refusal: %v", err)
-	}
-	if _, err := service.List(ctx, administrator(), data.Query{}); !errors.Is(err, security.ErrForbidden) {
-		t.Fatalf("List reached the Model before the policy refusal: %v", err)
-	}
-	if _, err := service.Create(ctx, administrator(), imports.CreateRequest{Name: "one"}); !errors.Is(err, security.ErrForbidden) {
-		t.Fatalf("Create reached the Model before the policy refusal: %v", err)
-	}
-}
-
-// recordingHandle runs nothing and keeps every statement it is handed, so a
-// test reads what the table compiles instead of reading its settings. The table
-// keeps its settings to itself; what it writes is the behaviour they decide.
-type recordingHandle struct {
-	*data.DB
-	statements []recordedStatement
-}
-
-type recordedStatement struct {
-	sql      string
-	bindings []any
-}
-
-// newRecordingHandle borrows the grammar and the processor of an SQLite handle
-// over no database, and answers every statement itself.
-func newRecordingHandle() *recordingHandle { return &recordingHandle{DB: nilHandle()} }
-
-func (h *recordingHandle) record(sql string, bindings []any) {
-	h.statements = append(h.statements, recordedStatement{sql: sql, bindings: slices.Clone(bindings)})
-}
-
-func (h *recordingHandle) Select(_ context.Context, sql string, bindings []any, _ bool) ([]query.Record, error) {
-	h.record(sql, bindings)
-	return nil, nil
-}
-
-func (h *recordingHandle) Insert(_ context.Context, sql string, bindings []any) (bool, error) {
-	h.record(sql, bindings)
-	return true, nil
-}
-
-func (h *recordingHandle) Update(_ context.Context, sql string, bindings []any) (int64, error) {
-	h.record(sql, bindings)
-	return 1, nil
-}
-
-func (h *recordingHandle) Delete(_ context.Context, sql string, bindings []any) (int64, error) {
-	h.record(sql, bindings)
-	return 1, nil
-}
-
-func (h *recordingHandle) Statement(_ context.Context, sql string, bindings []any) (bool, error) {
-	h.record(sql, bindings)
-	return true, nil
-}
-
-// first is the first recorded statement that starts with verb.
-func (h *recordingHandle) first(t *testing.T, verb string) recordedStatement {
-	t.Helper()
-	for _, statement := range h.statements {
-		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(statement.sql)), verb) {
-			return statement
+	expectForbidden := func(name string, err error) {
+		t.Helper()
+		if !errors.Is(err, security.ErrForbidden) {
+			t.Errorf("%s: want ErrForbidden before any statement, got %v", name, err)
 		}
 	}
-	t.Fatalf("no %s statement was issued; recorded %v", verb, h.statements)
-	return recordedStatement{}
-}
+	_, err := s.Upload(ctx, nobody, "plates", imports.Upload{Name: "a.csv", Body: strings.NewReader("plate\nABC1D23\n")})
+	expectForbidden("Upload", err)
+	_, err = s.Confirm(ctx, nobody, "plates", "r1")
+	expectForbidden("Confirm", err)
+	expectForbidden("Discard", s.Discard(ctx, nobody, "plates", "r1"))
+	_, err = s.RequestExport(ctx, nobody, "plates", "csv")
+	expectForbidden("RequestExport", err)
+	_, err = s.Find(ctx, nobody, "plates", "r1")
+	expectForbidden("Find", err)
+	_, err = s.List(ctx, nobody, imports.ListQuery{})
+	expectForbidden("List", err)
+	_, _, err = s.Open(ctx, nobody, "plates", "r1", true)
+	expectForbidden("Open", err)
+	_, _, err = s.Template(ctx, nobody, "plates", "csv", &strings.Builder{})
+	expectForbidden("Template", err)
 
-// TestImportssReturnsAWiredTenantScopedQuery holds what importsTable declares,
-// through what it makes the generated query do: the table it reads, a key the
-// application writes and the engine never fills, and a tenant_id taken from the
-// Grant on the way in and on the way out.
-func TestImportssReturnsAWiredTenantScopedQuery(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	handle := newRecordingHandle()
-	table := imports.Importss(handle).Base().Table()
-	if table.Name() != "importss" {
-		t.Fatalf("Importss table = %q, want importss", table.Name())
-	}
-	if key := table.MorphModel(handle); key.GetKeyName() != "id" || key.GetKeyType() != "string" {
-		t.Fatalf("Importss key is %q of type %q; want id, as text", key.GetKeyName(), key.GetKeyType())
-	}
-
-	row, err := imports.Importss(handle).New()
-	if err != nil {
-		t.Fatalf("building a row: %v", err)
-	}
-	if row.Table() != table {
-		t.Fatal("Importss returned an entity whose embedded Model is not wired to its table")
-	}
-
-	// The key is application-generated text: the insert carries the one the row
-	// was given, and the engine is never asked for one. An incrementing key
-	// would go through the processor, which runs on no database here, and a key
-	// the model generated would replace the one the service wrote.
-	row.ID = "record-1"
-	if _, err := row.Save(ctx, security.SystemGrant(imports.ImportsCreate, "acme")); err != nil {
-		t.Fatalf("saving through the recording handle: %v", err)
-	}
-	insert := handle.first(t, "insert")
-	if !slices.Contains(insert.bindings, any("record-1")) || row.ID != "record-1" {
-		t.Fatalf("the insert %q %v does not write the application key, or the row lost it (%q)", insert.sql, insert.bindings, row.ID)
-	}
-	if !strings.Contains(insert.sql, "tenant_id") || !slices.Contains(insert.bindings, any("acme")) {
-		t.Fatalf("the insert %q %v does not stamp tenant_id with the Grant's tenant", insert.sql, insert.bindings)
-	}
-
-	// And the tenant column scopes a read by the Grant's tenant.
-	if _, err := imports.Importss(handle).WhereKey("record-1").First(ctx, security.SystemGrant(imports.ImportsView, "acme")); err != nil {
-		t.Fatalf("reading through the recording handle: %v", err)
-	}
-	read := handle.first(t, "select")
-	if !strings.Contains(read.sql, "tenant_id") || !slices.Contains(read.bindings, any("acme")) {
-		t.Fatalf("the read %q %v is not filtered by tenant_id with the Grant's tenant", read.sql, read.bindings)
-	}
-}
-
-// TestTheMissingRecordIsTheModelsNotFound holds the one link between this
-// package's sentinel and the router's answer. The router answers
-// model.ErrModelNotFound with 404 and has never heard of ErrNotFound, so the
-// sentinel is a 404 only while it wraps the model's.
-func TestTheMissingRecordIsTheModelsNotFound(t *testing.T) {
-	t.Parallel()
-
-	if !errors.Is(imports.ErrNotFound, model.ErrModelNotFound) {
-		t.Fatal("ErrNotFound does not wrap model.ErrModelNotFound, so the router would answer a missing record with 500")
-	}
-}
-
-func TestASystemGrantWithoutATenantReachesNothing(t *testing.T) {
-	t.Parallel()
-
-	// A system grant with no tenant names no customer. The Model refuses it
-	// while preparing the query, before the nil handle can issue a statement.
-	_, err := imports.Importss(nilHandle()).WhereKey("record-1").First(
-		context.Background(), security.SystemGrant(imports.ImportsView, ""))
-	if !errors.Is(err, model.ErrNoTenant) {
-		t.Fatalf("a system grant with no tenant returned %v, want ErrNoTenant", err)
-	}
-}
-
-func TestTheTenantComesFromTheGrant(t *testing.T) {
-	t.Parallel()
-
-	g := security.SystemGrant(imports.ImportsView, "acme")
-	if got := data.Tenant(g); got != "acme" {
-		t.Fatalf("data.Tenant(g) = %q, want %q", got, "acme")
-	}
-
-	// And a Grant nobody issued carries no tenant at all, so a statement that
-	// took its tenant from anywhere else would be reading rows this Grant does
-	// not name.
-	if got := data.Tenant(security.Grant{}); got != "" {
-		t.Fatalf("the zero Grant carries the tenant %q, want none", got)
-	}
-}
-
-func TestTheRequestValidatesItsInput(t *testing.T) {
-	t.Parallel()
-
-	if errs := (imports.CreateRequest{}).Validate(); !errs.Any() {
-		t.Fatal("an empty request validated")
-	}
-	if errs := (imports.CreateRequest{Name: strings.Repeat("a", 121)}).Validate(); !errs.Any() {
-		t.Fatal("a name past the maximum validated")
-	}
-	if errs := (imports.CreateRequest{Name: "one"}).Validate(); errs.Any() {
-		t.Fatalf("a valid request was rejected: %v", errs)
+	// A definition nobody registered is not found, and says nothing else.
+	_, err = s.Find(ctx, holder(importAction), "nope", "r1")
+	if !errors.Is(err, imports.ErrNotFound) {
+		t.Errorf("an unknown definition: want ErrNotFound, got %v", err)
 	}
 }
 
 func TestTheConfigurationRefusesWhatCannotWork(t *testing.T) {
 	t.Parallel()
-
-	for name, cfg := range map[string]imports.Config{
-		"relative prefix":    {Prefix: "imports"},
-		"page size too big":  {PageSize: imports.MaxPageSize + 1},
-		"negative page size": {PageSize: -1},
-	} {
-		if err := cfg.Validate(); err == nil {
-			t.Errorf("the configuration with %s was accepted", name)
-		}
+	good := func() imports.Config {
+		return imports.Config{Definitions: definitions(), Files: disk(t), Queue: queue.NewDatabaseQueue(nilHandle())}
+	}
+	if err := good().Validate(); err != nil {
+		t.Fatalf("the base configuration was refused: %v", err)
 	}
 
-	// The zero value is the configuration an application that changes nothing
-	// writes, and it has to be one New accepts: there is no tenant to name,
-	// because every tenant comes from the Grant.
-	if err := (imports.Config{}).Validate(); err != nil {
-		t.Fatalf("the zero configuration was refused: %v", err)
+	cases := map[string]func(*imports.Config){
+		"no definitions": func(c *imports.Config) { c.Definitions = nil },
+		"no files":       func(c *imports.Config) { c.Files = nil },
+		"no queue":       func(c *imports.Config) { c.Queue = nil },
+		"bad prefix":     func(c *imports.Config) { c.Prefix = "no-slash" },
+		"reserved":       func(c *imports.Config) { c.Prefix = "/_arandu/imports" },
+		"page size":      func(c *imports.Config) { c.PageSize = 1000 },
+		"file size":      func(c *imports.Config) { c.MaxFileBytes = 1 << 40 },
+		"retention":      func(c *imports.Config) { c.RetentionDays = 1000 },
+		"duplicate key":  func(c *imports.Config) { c.Definitions = append(c.Definitions, c.Definitions[0]) },
+		"no import action": func(c *imports.Config) {
+			c.Definitions[0].ImportAction = ""
+		},
+		"no required column": func(c *imports.Config) {
+			c.Definitions[0].Columns = []imports.Column{{Key: "plate", Label: "Plate"}}
+		},
+		"bad key": func(c *imports.Config) { c.Definitions[0].Key = "Has Space" },
+		"clashing paths": func(c *imports.Config) {
+			c.Paths = imports.Paths{Template: "/x", Export: "/x"}
+		},
+	}
+	for name, change := range cases {
+		cfg := good()
+		change(&cfg)
+		if err := cfg.Validate(); err == nil {
+			t.Errorf("%s: the configuration was accepted", name)
+		}
 	}
 }

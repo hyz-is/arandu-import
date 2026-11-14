@@ -53,7 +53,11 @@ func (m *Module) indexPage(ctx *fhttp.Context, sc Screen, who security.Subject, 
 	data.TemplateCSV, data.TemplateXLSX = u.Template(def.Key, FormatCSV), u.Template(def.Key, FormatXLSX)
 	data.ExportURL = u.Export(def.Key)
 	for _, c := range def.Columns {
-		data.Columns = append(data.Columns, ColumnView{Label: c.Label, Hint: c.Hint, Required: c.Required})
+		mark := sc.Labels.T("screen.optional")
+		if c.Required {
+			mark = sc.Labels.T("screen.required")
+		}
+		data.Columns = append(data.Columns, ColumnView{Label: c.Label, Hint: c.Hint, Required: c.Required, Mark: mark})
 	}
 	return data
 }

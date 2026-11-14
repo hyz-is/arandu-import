@@ -1,6 +1,6 @@
 ---
 name: imports-module
-description: Change what this Arandu package registers — its routes, handlers, configuration, response shape or schema. Use when the request is to "add a route", "add an endpoint", "add a handler", "add a config option", "change the prefix", "add a field to the response", "add a column", "write a migration", "return the tenant id too", "add a background job to the package", "make it run something at boot", "add a scope", "add a rule to the entity", "regenerate the query", "who is the current user in a handler", "return 404", or when a change touches module.go, config.go, model.go or ImportsQuery.go. Covers foundation.Module and the five optional interfaces beside it, why handlers are thin, the RequireAuth guard and ctx.User, returning errors for the router to answer, the generated query and aru model:build, where the rules of the entity live, the migration name that carries the order, and what Resource is for.
+description: Change what this Arandu package registers — its routes, handlers, configuration, response shape or schema. Use when the request is to "add a route", "add an endpoint", "add a handler", "add a config option", "change the prefix", "add a field to the response", "add a column", "write a migration", "return the tenant id too", "add a background job to the package", "make it run something at boot", "add a scope", "add a rule to the entity", "regenerate the query", "who is the current user in a handler", "return 404", or when a change touches module.go, config.go, model.go or RunQuery.go. Covers foundation.Module and the five optional interfaces beside it, why handlers are thin, the RequireAuth guard and ctx.User, returning errors for the router to answer, the generated query and aru model:build, where the rules of the entity live, the migration name that carries the order, and what Resource is for.
 license: MIT
 ---
 
@@ -101,7 +101,7 @@ what it is handed, so a nil resource panics inside the framework rather than
 answering 204.
 
 No rule and no Model construction lives in a handler. A handler that held the
-database or called `Importss` would bypass the only place the Policy is
+database or called `Runs` would bypass the only place the Policy is
 guaranteed to run. Read `imports-policy` before writing the Service method.
 
 **3. Return the error; the router answers it.** The handler writes `return err`
@@ -160,14 +160,14 @@ to serve without any session is a `security.Guest` the code declares on purpose
 
 ## Changing the Model
 
-`Imports` embeds `model.Model`, and `importsTable` declares its table once,
+`Run` embeds `model.Model`, and `runTable` declares its table once,
 beside it in `model.go`. Keep the application-generated key and the tenant
 default visible there:
 
 ```go
-var importsTable = model.NewTable(model.TableSpec{
+var runTable = model.NewTable(model.TableSpec{
 	Name:      "importss",
-	New:       func() model.Entity { return new(Imports) },
+	New:       func() model.Entity { return new(Run) },
 	ManualKey: true,
 })
 ```
@@ -178,8 +178,8 @@ package owns tenant data. Model terminals require a Grant and apply `tenant_id`;
 the Service still calls `security.Authorize` first because the Model does not
 decide which Policy action the Grant represents.
 
-`ImportsQuery.go` is generated from that declaration: `Importss(db)`, the
-`*ImportsQuery` it returns, and `ImportsCollection`. It is never edited by
+`RunQuery.go` is generated from that declaration: `Runs(db)`, the
+`*RunQuery` it returns, and `RunCollection`. It is never edited by
 hand. After changing the struct or the table, run
 
 ```sh
@@ -189,7 +189,7 @@ aru model:build
 and commit what it rewrote. `aru model:build --check` writes nothing and exits 1
 when the file is missing, stale or hand-edited.
 
-Every query starts at `Importss(s.db)`. The constructor returns one mutable
+Every query starts at `Runs(s.db)`. The constructor returns one mutable
 query, so a second chain begun from a value held in a variable carries the
 clauses of the first — and compiles.
 
@@ -209,10 +209,10 @@ protects come as a pair:
 // arandu:begin custom
 
 // CanRename reports whether the record may take this name.
-func (s Imports) CanRename(name string) bool { return name != "" && name != s.Name }
+func (s Run) CanRename(name string) bool { return name != "" && name != s.Name }
 
 // Rename gives the record a new name, and refuses one it cannot take.
-func (s *Imports) Rename(name string) error {
+func (s *Run) Rename(name string) error {
 	if !s.CanRename(name) {
 		return fmt.Errorf("imports: %q cannot be the new name of this record", name)
 	}
@@ -223,12 +223,12 @@ func (s *Imports) Rename(name string) error {
 // arandu:end custom
 ```
 
-A local scope is a method on `*ImportsQuery` in the same block, and a relation
-is registered on `importsTable` from an `init` function:
+A local scope is a method on `*RunQuery` in the same block, and a relation
+is registered on `runTable` from an `init` function:
 
 ```go
 // Named narrows the query to the records with this name.
-func (q *ImportsQuery) Named(name string) *ImportsQuery {
+func (q *RunQuery) Named(name string) *RunQuery {
 	return q.Where("name", "=", name)
 }
 ```
@@ -271,7 +271,7 @@ if the field can make `New` fail.
 
 `Resource` and `Collection` in `model.go` are declared snapshots, not direct
 encoding of the entity. This also defines the safe copy boundary: Model-backed
-Service results stay as `*Imports`/`[]*Imports`, because a copied row keeps
+Service results stay as `*Run`/`[]*Run`, because a copied row keeps
 the model of the original and refuses to be written. A response snapshot reads
 only the explicit fields and cannot be saved.
 
@@ -307,7 +307,7 @@ Append it to the slice `Migrations()` returns, and give it a name that sorts
 after the last one:
 
 ```go
-func (createImportss) GetName() string { return "20260823_0001_create_importss" }
+func (createRuns) GetName() string { return "20260823_0001_create_import_runs" }
 ```
 
 **The name carries the order and nothing else does.** `TestTheModuleDeclaresItsSchema`
