@@ -200,8 +200,9 @@ func (s Screen) When(t time.Time) string {
 // DefinitionView is a definition as a screen shows it.
 type DefinitionView struct {
 	Key, Label, Description string
-	// URL is the page of the definition.
-	URL string
+	// URL is the page of the definition, and ListURL where the application
+	// lists its records.
+	URL, ListURL string
 	// CanImport and CanExport say what the subject may do with it.
 	CanImport, CanExport bool
 }
@@ -430,8 +431,14 @@ func Itoa(n int) string { return strconv.Itoa(n) }
 // Overview says the page is the overview and not the page of one definition.
 func (d IndexPageData) Overview() bool { return d.Definition == nil }
 
-// BackURL is where the page of a definition goes back to: the overview.
-func (d IndexPageData) BackURL() string { return d.URLs.Index() }
+// BackURL is where the page of a definition goes back to: the application's own
+// list of the records when it said where that is, the overview otherwise.
+func (d IndexPageData) BackURL() string {
+	if d.Definition != nil && d.Definition.ListURL != "" {
+		return d.Definition.ListURL
+	}
+	return d.URLs.Index()
+}
 
 // UploadHint is the line under the file box: what it takes and how much.
 func (d IndexPageData) UploadHint() string {

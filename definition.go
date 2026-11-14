@@ -103,6 +103,9 @@ type Definition struct {
 	Label string
 	// Description is the lead of the import screen.
 	Description string
+	// ListURL is where the application lists the records themselves. The page of
+	// the definition links back to it; empty links back to the overview.
+	ListURL string
 	// Columns are the fields of a row, in the order the template writes them.
 	Columns []Column
 	// MaxRows is how many rows one file may hold. Zero means DefaultMaxRows,

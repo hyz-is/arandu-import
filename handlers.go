@@ -328,7 +328,7 @@ func (m *Module) allows(ctx *fhttp.Context, who security.Subject, a security.Act
 // may do with it.
 func (m *Module) definitionView(ctx *fhttp.Context, who security.Subject, def Definition) DefinitionView {
 	return DefinitionView{
-		Key: def.Key, Label: def.Label, Description: def.Description, URL: m.URLs().Definition(def.Key),
+		Key: def.Key, Label: def.Label, Description: def.Description, URL: m.URLs().Definition(def.Key), ListURL: def.ListURL,
 		CanImport: def.CanImport() && m.allows(ctx, who, def.ImportAction),
 		CanExport: def.CanExport() && m.allows(ctx, who, def.ExportAction),
 	}
