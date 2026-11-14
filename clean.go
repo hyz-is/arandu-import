@@ -10,11 +10,6 @@ import (
 	"github.com/arandu-io/framework/security"
 )
 
-// CleanAction is the action the clean runs under, in the tenant of the runs it
-// reaches. No subject holds it: it is issued to the scheduler and to nobody
-// else.
-const CleanAction security.Action = "imports.clean"
-
 // Schedule declares the daily clean of the files. The files of an upload, a
 // report and an export are deleted when the run expires: they hold the rows of
 // the person's records, and a copy that nobody remembers is a copy that leaks.

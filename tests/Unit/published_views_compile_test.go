@@ -153,7 +153,7 @@ func main() {
 	history := []imports.RunRow{{ID: "r1", Definition: "lista", DefinitionLabel: "Lista de permitidos", Kind: "import", KindLabel: "Importação",
 		Status: "Concluída", StatusKey: "done", StatusVariant: "outline", FileName: "placas.xlsx", Format: "XLSX",
 		Result: "Novas: 3 · Atualizadas: 1 · Sem mudança: 0 · Recusadas: 2", When: "13/11/2026 12:00", URL: "/painel/importacoes/lista/r1"}}
-	columns := []imports.ColumnView{{Label: "Placa", Required: true, Hint: "ABC1D23"}, {Label: "Nota"}}
+	columns := []imports.ColumnView{{Label: "Placa", Required: true, Hint: "ABC1D23", Mark: "obrigatória"}, {Label: "Nota", Mark: "opcional"}}
 	line := func(n int, plate, note, reason string) imports.LineRow {
 		return imports.LineRow{Number: n, Cells: []string{plate, note}, Reason: reason}
 	}

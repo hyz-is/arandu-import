@@ -10,12 +10,15 @@ framework = ">= 0.67"
 profiles = ["conventional", "performance"]
 
 [permissions]
-# It answers requests and reads its own rows. Nothing leaves the process.
+# It answers requests, reads its own rows and runs two jobs on the queue the
+# application passes in. Nothing leaves the process.
 network = false
-# It keeps no state outside the database.
+# It opens no file of its own. The uploads, the reports and the exports go to the
+# Disk the application passes in Config.Files, in production a private bucket,
+# under keys the server generates.
 filesystem = false
 # It runs no other program.
 exec = false
-# module.go owns the importss table, so whoever installs this has to run
+# migrations.go owns the import_runs table, so whoever installs this has to run
 # `aru migrate`. Declaring it is how they find that out before deploying.
 migrations = true

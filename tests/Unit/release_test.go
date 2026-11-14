@@ -86,12 +86,12 @@ func TestEveryActionIsNamedInAReleasedChangelogEntry(t *testing.T) {
 // so a version that shipped one and did not say so is a version that fails at
 // the first request against a column that is not there.
 func TestEveryMigrationIsNamedInAReleasedChangelogEntry(t *testing.T) {
-	module := readReleaseFile(t, packageRoot(t), "module.go")
+	module := readReleaseFile(t, packageRoot(t), "migrations.go")
 	released := releasedChangelog(t)
 
 	ids := regexp.MustCompile(`"([0-9]{8}_[0-9]{4}_[a-z_]+)"`).FindAllStringSubmatch(module, -1)
 	if len(ids) == 0 {
-		t.Fatal("module.go declares no migrations")
+		t.Fatal("migrations.go declares no migrations")
 	}
 	seen := map[string]bool{}
 	for _, id := range ids {

@@ -29,6 +29,13 @@ const viewPrefix = "imports.view:"
 // viewOf is the read form of a Definition's action.
 func viewOf(a security.Action) security.Action { return security.Action(viewPrefix) + a }
 
+const (
+	// CleanAction is the action the clean runs under, in the tenant of the runs
+	// it reaches. No subject holds it: it is issued to the scheduler and to
+	// nobody else.
+	CleanAction security.Action = "imports.clean"
+)
+
 // ViewOf is the read form of a Definition's action: the action the package
 // authorizes to look at a run or a report. It is exported so an application can
 // ask its own policy tests what the package asks.

@@ -1,345 +1,321 @@
 package feature_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
-	"sort"
+	"net/url"
 	"strings"
+	"sync"
 	"testing"
-	"time"
 
-	"github.com/arandu-io/framework/data"
 	fhttp "github.com/arandu-io/framework/http"
-	"github.com/arandu-io/framework/http/middleware"
 	"github.com/arandu-io/framework/security"
-	"github.com/arandu-io/hesape/database/migrations"
-	hhttp "github.com/arandu-io/hesape/http"
+	"github.com/arandu-io/hesape/view"
 
 	imports "github.com/hyz-is/arandu-import"
 )
 
-// These tests drive the module the way an application does: build it, register
-// its routes on a router, and make a request.
-//
-// The database handle wraps nothing, and that is the assertion. A request that
-// reached a statement would panic, so every answer below is proof that the
-// refusal happened in the guard or the policy and not after a read.
+// These tests drive the module the way an application does: register its routes
+// on a router and make requests with a session. The views are stand-ins that
+// say what data they were handed, because compiling the real ones is the
+// published-views test's job.
 
-// appKey is the key a session store is built over. Any thirty-two bytes will
-// do here; a real application reads its own from the environment.
-const appKey = "0123456789abcdef0123456789abcdef"
+var signedIn sync.Map
 
-// reservedPrefix is the namespace the framework keeps for itself: the health
-// probe, the reload endpoint, the development console, the addressed assets.
-//
-// A module that registers under it is refused when the application boots, by
-// name -- and that refusal happens in the process of whoever installed this
-// package, after it was published. Here the same rule is a failing test, in the
-// repository that can still fix it.
-const reservedPrefix = "/_arandu"
+var stubs sync.Once
 
-// mounted is the module registered on a router the way the kernel builds one,
-// with the session store its guard reads and the flash its router answers a
-// rejected input with.
-type mounted struct {
-	router   *fhttp.Router
-	sessions *security.SessionStore
-	flash    *security.Flash
+func stubViews() {
+	stubs.Do(func() {
+		for _, name := range imports.ViewNames() {
+			view.Register(name, func(w io.Writer, data any) error {
+				switch d := data.(type) {
+				case imports.ShowPageData:
+					_, err := fmt.Fprintf(w, "show %s %s polling=%v", d.Run.ID, d.Run.StatusKey, d.Polling)
+					return err
+				case imports.IndexPageData:
+					_, err := fmt.Fprintf(w, "index rows=%d overview=%v", len(d.Rows), d.Overview())
+					return err
+				}
+				_, err := fmt.Fprintf(w, "%T", data)
+				return err
+			})
+		}
+	})
 }
 
-// mount builds the module and returns a router with its routes registered.
-func mount(t *testing.T, cfg imports.Config) mounted {
-	t.Helper()
+type site struct {
+	*world
+	router *fhttp.Router
+}
 
-	sessions := security.NewSessionStore([]byte(appKey), time.Hour, false, security.NewMemoryBackend())
-	// The session keeps who signed in; the roles are the application's to
-	// answer on every request, the way an application wires its accounts.
-	sessions.ResolveSubjects(func(_ context.Context, who security.Subject) (security.Subject, error) {
-		if admin := administrator(); who.ID == admin.ID && who.Tenant == admin.Tenant {
-			return admin, nil
+func mount(t *testing.T) site {
+	t.Helper()
+	stubViews()
+	w := install(t)
+	w.sessions.ResolveSubjects(func(_ context.Context, who security.Subject) (security.Subject, error) {
+		if s, ok := signedIn.Load(who.Tenant + "/" + who.ID); ok {
+			return s.(security.Subject), nil
 		}
-		return security.Subject{}, hhttp.ErrSubjectGone
+		return who, nil
 	})
 	flash := security.NewFlash([]byte(appKey), false)
-
-	module, err := imports.New(cfg, data.Wrap(nil, data.DialectSQLite), sessions)
-	if err != nil {
-		t.Fatalf("building the module: %v", err)
-	}
-
-	// WithFlash is what the kernel does at boot. Without it the router has
-	// nowhere to put a rejected input and answers it as a failure.
-	router := fhttp.NewRouter().WithFlash(flash)
-	module.Routes(router.ForModule(module.Name()))
-	return mounted{router: router, sessions: sessions, flash: flash}
+	router := fhttp.NewRouter().WithFlash(flash).WithRenderer(view.NewRenderer())
+	w.module.Routes(router.ForModule(w.module.Name()))
+	return site{world: w, router: router}
 }
 
-// administrator is the most privileged subject an application can produce.
-func administrator() security.Subject {
-	return security.Subject{ID: "user-1", Tenant: "acme", Roles: []string{"admin"}, Verified: true}
-}
-
-// signIn starts a session for the subject's account and returns the cookies a
-// browser would send back with the next request. Only the account is written
-// to the session; its roles come back through the store's resolver.
-func (m mounted) signIn(t *testing.T, subject security.Subject) []*http.Cookie {
+func (s site) signIn(t *testing.T, subject security.Subject) []*http.Cookie {
 	t.Helper()
-
+	signedIn.Store(subject.Tenant+"/"+subject.ID, subject)
 	rec := httptest.NewRecorder()
-	who := security.Subject{ID: subject.ID, Tenant: subject.Tenant}
-	if _, err := m.sessions.Start(context.Background(), rec, who); err != nil {
-		t.Fatalf("starting a session: %v", err)
+	if _, err := s.sessions.Start(context.Background(), rec, security.Subject{ID: subject.ID, Tenant: subject.Tenant}); err != nil {
+		t.Fatal(err)
 	}
-	cookies := rec.Result().Cookies()
-	if len(cookies) == 0 {
-		t.Fatal("starting a session wrote no cookie")
-	}
-	return cookies
+	return rec.Result().Cookies()
 }
 
-// answer makes one request against the router and returns the recorder.
-//
-// A panic out of the router is a failure of this test rather than of the run:
-// it is how an error nobody claimed arrives here, and reporting it by name says
-// which request produced it.
-func (m mounted) answer(t *testing.T, method, target, body string, cookies ...*http.Cookie) (rec *httptest.ResponseRecorder) {
+func (s site) do(t *testing.T, req *http.Request, cookies []*http.Cookie) *httptest.ResponseRecorder {
 	t.Helper()
-
-	req := httptest.NewRequest(method, target, strings.NewReader(body))
-	if body != "" {
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for _, c := range cookies {
+		req.AddCookie(c)
 	}
-	for _, cookie := range cookies {
-		req.AddCookie(cookie)
-	}
-	rec = httptest.NewRecorder()
+	rec := httptest.NewRecorder()
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			t.Fatalf("%s %s panicked, which a deployed router answers with 500: %v", method, target, recovered)
+			t.Fatalf("%s %s panicked: %v", req.Method, req.URL, recovered)
 		}
 	}()
-	m.router.ServeHTTP(rec, req)
+	s.router.ServeHTTP(rec, req)
 	return rec
 }
 
-// everyRoute is a request to each route the module registers, under the
-// default prefix. TestTheModuleRegistersItsRoutesUnderItsPrefix fails when a
-// route exists that this list does not reach.
-var everyRoute = []struct {
-	method string
-	target string
-	body   string
-}{
-	{http.MethodGet, imports.DefaultPrefix, ""},
-	{http.MethodGet, imports.DefaultPrefix + "/record-1", ""},
-	{http.MethodPost, imports.DefaultPrefix, "name=one"},
+func (s site) get(t *testing.T, target string, cookies []*http.Cookie, headers ...string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodGet, target, nil)
+	for i := 0; i+1 < len(headers); i += 2 {
+		req.Header.Set(headers[i], headers[i+1])
+	}
+	return s.do(t, req, cookies)
 }
 
-func TestAVisitorWithNoSessionIsSentToSignIn(t *testing.T) {
-	t.Parallel()
+func (s site) post(t *testing.T, target string, form url.Values, cookies []*http.Cookie) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, target, strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	return s.do(t, req, cookies)
+}
 
-	m := mount(t, imports.Config{})
-
-	// RequireAuth answers before the handler runs, so a visitor with no
-	// session reaches neither the policy nor the database: the answer is the
-	// sign-in screen, not a refusal from a policy that was asked about nobody.
-	for _, request := range everyRoute {
-		rec := m.answer(t, request.method, request.target, request.body)
-		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != middleware.SignInPath {
-			t.Errorf("%s %s answered %d to %q, want %d to %s",
-				request.method, request.target, rec.Code, rec.Header().Get("Location"),
-				http.StatusSeeOther, middleware.SignInPath)
+func (s site) postFile(t *testing.T, target, field, name string, body []byte, cookies []*http.Cookie, headers ...string) *httptest.ResponseRecorder {
+	t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	if field != "" {
+		part, err := mw.CreateFormFile(field, name)
+		if err != nil {
+			t.Fatal(err)
 		}
+		_, _ = part.Write(body)
 	}
+	_ = mw.Close()
+	req := httptest.NewRequest(http.MethodPost, target, &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	for i := 0; i+1 < len(headers); i += 2 {
+		req.Header.Set(headers[i], headers[i+1])
+	}
+	return s.do(t, req, cookies)
 }
 
-func TestASignedInSubjectReachesThePolicyAndIsRefused(t *testing.T) {
-	t.Parallel()
+const base = imports.DefaultPrefix + "/plates"
 
-	m := mount(t, imports.Config{})
-	cookies := m.signIn(t, administrator())
-
-	// The guard admits the session and puts its subject on the request; the
-	// handler hands it to the service, and the closed policy refuses it. The
-	// router turns that refusal into 403 -- before any statement, which the
-	// handle over no database would have panicked on.
-	for _, request := range everyRoute {
-		rec := m.answer(t, request.method, request.target, request.body, cookies...)
-		if rec.Code != http.StatusForbidden {
-			t.Errorf("%s %s answered %d for a signed-in administrator, want %d",
-				request.method, request.target, rec.Code, http.StatusForbidden)
-		}
-	}
-}
-
-func TestARejectedInputGoesBackBeforeTheDatabase(t *testing.T) {
-	t.Parallel()
-
-	m := mount(t, imports.Config{})
-	cookies := m.signIn(t, administrator())
-
-	// The input is validated before anything is authorized, so this refusal
-	// comes from the request and not from the policy. The router answers it the
-	// way it answers every rejected form: back where it came from, with the
-	// messages in the flash -- and it still never reaches a statement.
-	rec := m.answer(t, http.MethodPost, imports.DefaultPrefix, "name=", cookies...)
-	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" {
-		t.Fatalf("an empty name answered %d to %q, want %d back to /", rec.Code, rec.Header().Get("Location"), http.StatusSeeOther)
-	}
-
-	// The page the redirect lands on is a navigation, which is the only read the
-	// flash spends itself on.
-	next := httptest.NewRequest(http.MethodGet, "/", nil)
-	next.Header.Set("Accept", "text/html")
-	for _, cookie := range rec.Result().Cookies() {
-		next.AddCookie(cookie)
-	}
-	errs, _, ok := m.flash.Take(httptest.NewRecorder(), next)
-	if !ok || len(errs["name"]) == 0 {
-		t.Fatalf("the redirect carries no message for name in the flash: %v", errs)
-	}
-}
-
-// TestTheRouterAnswersAMissingRecordWith404 holds the half of ErrNotFound the
-// unit suite cannot: that the router this module registers on answers it, with
-// no mapping written in the module.
-func TestTheRouterAnswersAMissingRecordWith404(t *testing.T) {
-	t.Parallel()
-
-	router := fhttp.NewRouter()
-	router.Action(http.MethodGet, "/missing", func(*fhttp.Context) error {
-		return imports.ErrNotFound
-	})
-	m := mounted{router: router}
-
-	if rec := m.answer(t, http.MethodGet, "/missing", ""); rec.Code != http.StatusNotFound {
-		t.Fatalf("ErrNotFound answered %d, want %d", rec.Code, http.StatusNotFound)
-	}
-}
-
-func TestTheModuleRegistersItsRoutesUnderItsPrefix(t *testing.T) {
-	t.Parallel()
-
-	m := mount(t, imports.Config{Prefix: "/widgets"})
-
-	got := make([]string, 0, 3)
-	for _, route := range m.router.Routes() {
-		if route.Module != "imports" {
-			t.Errorf("the route %s %s is not tagged with the module name: %q", route.Method, route.Pattern, route.Module)
-		}
-		got = append(got, route.Method+" "+route.Pattern)
-	}
-	sort.Strings(got)
-
-	want := []string{"GET /widgets", "GET /widgets/{id}", "POST /widgets"}
-	if len(got) != len(want) || len(got) != len(everyRoute) {
-		t.Fatalf("registered %v, want %v, and everyRoute reaches %d of them", got, want, len(everyRoute))
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("registered %v, want %v", got, want)
-		}
-	}
-}
-
-// TestNoRouteLandsInTheFrameworkNamespace is the one property of this package
-// that syntax cannot hold, and it is why it is checked here rather than beside
-// the other four in tests/Unit/audit_test.go: a prefix arrives through
-// configuration, so the only way to know where the routes ended up is to
-// register them and read the table back.
-//
-// Both the default and a configured prefix are mounted, because the two reach
-// the router by different paths and only one of them is written in this
-// repository.
-func TestNoRouteLandsInTheFrameworkNamespace(t *testing.T) {
-	t.Parallel()
-
-	for _, cfg := range []imports.Config{
-		{},
-		{Prefix: "/widgets"},
+func TestEveryRouteSendsAVisitorWithNoSessionToSignIn(t *testing.T) {
+	s := mount(t)
+	for _, c := range []struct{ method, target string }{
+		{"GET", imports.DefaultPrefix}, {"GET", base}, {"POST", base}, {"GET", base + "/template/csv"}, {"POST", base + "/export"},
+		{"GET", base + "/runs/r1"}, {"GET", base + "/runs/r1/progress"}, {"POST", base + "/runs/r1/confirm"},
+		{"POST", base + "/runs/r1/discard"}, {"GET", base + "/runs/r1/refused"}, {"GET", base + "/runs/r1/file"},
 	} {
-		m := mount(t, cfg)
-
-		registered := 0
-		for _, route := range m.router.Routes() {
-			registered++
-			if route.Pattern == reservedPrefix || strings.HasPrefix(route.Pattern, reservedPrefix+"/") {
-				t.Errorf("the route %s %s is registered under %s/, which the framework keeps for itself and refuses at boot",
-					route.Method, route.Pattern, reservedPrefix)
-			}
-		}
-		if registered == 0 {
-			t.Fatal("the module registered no route, so this test proved nothing")
+		rec := s.do(t, httptest.NewRequest(c.method, c.target, nil), nil)
+		if rec.Code != http.StatusSeeOther || !strings.HasPrefix(rec.Header().Get("Location"), "/auth/login") {
+			t.Errorf("%s %s with no session: %d to %q, want 303 to the sign-in", c.method, c.target, rec.Code, rec.Header().Get("Location"))
 		}
 	}
 }
 
-func TestNewRefusesAWiringThatCannotWork(t *testing.T) {
-	t.Parallel()
-
-	sessions := security.NewSessionStore([]byte(appKey), time.Hour, false, security.NewMemoryBackend())
-	handle := data.Wrap(nil, data.DialectSQLite)
-	valid := imports.Config{}
-
-	if _, err := imports.New(imports.Config{PageSize: -1}, handle, sessions); err == nil {
-		t.Error("a configuration with a negative page size was accepted")
+func TestASignedInSubjectWithoutTheActionIsRefused(t *testing.T) {
+	s := mount(t)
+	cookies := s.signIn(t, who("acme", "nobody"))
+	for _, target := range []string{imports.DefaultPrefix, base, base + "/template/csv", base + "/runs/r1"} {
+		if rec := s.get(t, target, cookies); rec.Code != http.StatusForbidden {
+			t.Errorf("GET %s: %d, want 403", target, rec.Code)
+		}
 	}
-	if _, err := imports.New(valid, nil, sessions); err == nil {
-		t.Error("a nil database handle was accepted")
+	if rec := s.postFile(t, base, "file", "a.csv", []byte("Placa\nABC1D23\n"), cookies); rec.Code != http.StatusForbidden {
+		t.Errorf("an upload without the action: %d, want 403", rec.Code)
 	}
-	if _, err := imports.New(valid, handle, nil); err == nil {
-		t.Error("a nil session store was accepted")
+	if rec := s.post(t, base+"/export", url.Values{"format": {"csv"}}, cookies); rec.Code != http.StatusForbidden {
+		t.Errorf("an export without the action: %d, want 403", rec.Code)
 	}
-	if _, err := imports.New(valid, handle, sessions); err != nil {
-		t.Fatalf("a valid wiring was refused: %v", err)
+	if s.pending(t) != 0 || s.store.writes != 0 {
+		t.Error("a refused request queued a job or wrote a row")
 	}
 }
 
-func TestNewRefusesARoutePrefixThatCannotBeRegistered(t *testing.T) {
-	t.Parallel()
+func TestTheWholeFlowThroughTheRoutes(t *testing.T) {
+	s := mount(t)
+	cookies := s.signIn(t, ana)
 
-	sessions := security.NewSessionStore([]byte(appKey), time.Hour, false, security.NewMemoryBackend())
-	handle := data.Wrap(nil, data.DialectSQLite)
+	// The two pages.
+	if rec := s.get(t, imports.DefaultPrefix, cookies); rec.Code != 200 || !strings.Contains(rec.Body.String(), "overview=true") {
+		t.Errorf("overview: %d %q", rec.Code, rec.Body.String())
+	}
+	if rec := s.get(t, base, cookies); rec.Code != 200 || !strings.Contains(rec.Body.String(), "overview=false") {
+		t.Errorf("definition page: %d %q", rec.Code, rec.Body.String())
+	}
+	if rec := s.get(t, imports.DefaultPrefix+"/nope", cookies); rec.Code != http.StatusNotFound {
+		t.Errorf("an unknown definition: %d, want 404", rec.Code)
+	}
 
-	for _, prefix := range []string{"/widgets{", "/widgets/{id}"} {
-		if _, err := imports.New(imports.Config{Prefix: prefix}, handle, sessions); err == nil {
-			t.Errorf("New accepted route prefix %q, which would panic during route registration", prefix)
+	// The template downloads in both formats, never inline.
+	for format, kind := range map[string]string{"csv": "text/csv", "xlsx": "spreadsheetml"} {
+		rec := s.get(t, base+"/template/"+format, cookies)
+		if rec.Code != 200 || !strings.Contains(rec.Header().Get("Content-Type"), kind) ||
+			!strings.HasPrefix(rec.Header().Get("Content-Disposition"), "attachment") || rec.Header().Get("X-Content-Type-Options") != "nosniff" {
+			t.Errorf("template %s: %d %v", format, rec.Code, rec.Header())
 		}
+	}
+	if rec := s.get(t, base+"/template/pdf", cookies); rec.Code != http.StatusNotFound {
+		t.Errorf("an unknown template format: %d, want 404", rec.Code)
+	}
+
+	// The upload redirects to the run's page, whose state is the preview.
+	rec := s.postFile(t, base, "file", "placas.csv", []byte("Placa;Nota\nABC1D23;ok\nBAD;x\n"), cookies)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("upload: %d %q", rec.Code, rec.Body.String())
+	}
+	runURL := rec.Header().Get("Location")
+	if !strings.HasPrefix(runURL, base+"/runs/") {
+		t.Fatalf("the upload went to %q", runURL)
+	}
+	if rec := s.get(t, runURL, cookies); rec.Code != 200 || !strings.Contains(rec.Body.String(), "uploaded polling=false") {
+		t.Errorf("the preview page: %d %q", rec.Code, rec.Body.String())
+	}
+
+	// A browser that has scripts sends the same upload as an htmx request and
+	// is told where to go.
+	rec = s.postFile(t, base, "file", "placas.csv", []byte("Placa\nXYZ9K88\n"), cookies, "HX-Request", "true")
+	if rec.Header().Get("HX-Redirect") == "" {
+		t.Errorf("an htmx upload was not redirected: %d %v", rec.Code, rec.Header())
+	}
+
+	// Confirm queues, the page polls, the fragment is the state alone.
+	if rec := s.post(t, runURL+"/confirm", nil, cookies); rec.Code != http.StatusSeeOther {
+		t.Fatalf("confirm: %d", rec.Code)
+	}
+	if rec := s.get(t, runURL+"/progress", cookies, "HX-Request", "true"); rec.Code != 200 ||
+		!strings.Contains(rec.Body.String(), "queued polling=true") || rec.Header().Get("Cache-Control") != "private, no-store" {
+		t.Errorf("progress while queued: %d %q %v", rec.Code, rec.Body.String(), rec.Header())
+	}
+	s.work(t)
+	if rec := s.get(t, runURL+"/progress", cookies, "HX-Request", "true"); !strings.Contains(rec.Body.String(), "done polling=false") {
+		t.Errorf("progress once done must stop polling: %q", rec.Body.String())
+	}
+
+	// The report of the refused rows downloads, and the run is JSON on request.
+	rec = s.get(t, runURL+"/refused", cookies)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "Placa inválida") ||
+		!strings.Contains(rec.Header().Get("Content-Disposition"), "attachment") ||
+		rec.Header().Get("Content-Security-Policy") != "default-src 'none'; sandbox" {
+		t.Errorf("report: %d %q %v", rec.Code, rec.Body.String(), rec.Header())
+	}
+	rec = s.get(t, runURL, cookies, "Accept", "application/json")
+	var body struct {
+		Data map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body.Data["status"] != "done" || body.Data["refused"].(float64) != 1 || body.Data["percent"].(float64) != 100 {
+		t.Errorf("json: %v %s", err, rec.Body.String())
+	}
+	for _, leaked := range []string{"tenant", "file_key", "report_key", "acme"} {
+		if strings.Contains(rec.Body.String(), leaked) {
+			t.Errorf("the run's JSON carries %q", leaked)
+		}
+	}
+
+	// An export is asked for, done, and downloaded.
+	rec = s.post(t, base+"/export", url.Values{"format": {"xlsx"}}, cookies)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("export: %d", rec.Code)
+	}
+	exportURL := rec.Header().Get("Location")
+	s.work(t)
+	rec = s.get(t, exportURL+"/file", cookies)
+	if rec.Code != 200 || !strings.Contains(rec.Header().Get("Content-Type"), "spreadsheetml") || rec.Body.Len() == 0 {
+		t.Errorf("export file: %d %v", rec.Code, rec.Header())
+	}
+	if rec := s.post(t, base+"/export", url.Values{"format": {"exe"}}, cookies); rec.Code == http.StatusSeeOther && strings.Contains(rec.Header().Get("Location"), "/runs/") {
+		t.Error("an export in a format nobody offers was queued")
+	}
+
+	// Another tenant, same addresses: not found.
+	other := s.signIn(t, bruno)
+	for _, target := range []string{runURL, runURL + "/progress", runURL + "/refused", exportURL + "/file"} {
+		if rec := s.get(t, target, other); rec.Code != http.StatusNotFound {
+			t.Errorf("GET %s as another tenant: %d, want 404", target, rec.Code)
+		}
+	}
+	if rec := s.post(t, runURL+"/confirm", nil, other); rec.Code != http.StatusNotFound {
+		t.Errorf("confirm as another tenant: %d, want 404", rec.Code)
 	}
 }
 
-func TestTheModuleDeclaresItsSchema(t *testing.T) {
-	t.Parallel()
-
-	sessions := security.NewSessionStore([]byte(appKey), time.Hour, false, security.NewMemoryBackend())
-	module, err := imports.New(imports.Config{}, data.Wrap(nil, data.DialectSQLite), sessions)
-	if err != nil {
-		t.Fatalf("building the module: %v", err)
-	}
-
-	declared := module.Migrations()
-	if len(declared) == 0 {
-		t.Fatal("the module declares migrations = true and returns none")
-	}
-
-	names := make([]string, 0, len(declared))
-	for _, migration := range declared {
-		name := migration.GetName()
-		if name == "" {
-			t.Fatal("a migration has no name, and the name is what carries the order")
-		}
-		names = append(names, name)
-
-		// A migration that cannot be rolled back is a deploy that cannot be
-		// undone. The migrator finds Down by type assertion, so a Down with the
-		// wrong signature is a rollback that silently does nothing.
-		if _, ok := migration.(migrations.ReversibleMigration); !ok {
-			t.Errorf("the migration %s has no Down", name)
+func TestAnUploadWithNoFileOrTooBigGoesBackWithAMessage(t *testing.T) {
+	s := mount(t)
+	cookies := s.signIn(t, ana)
+	for name, rec := range map[string]*httptest.ResponseRecorder{
+		"no field":  s.postFile(t, base, "", "", nil, cookies),
+		"no file":   s.postFile(t, base, "file", "", nil, cookies),
+		"too small": s.postFile(t, base, "file", "a.csv", []byte("  "), cookies),
+		"not csv":   s.postFile(t, base, "file", "a.pdf", []byte("%PDF-1.4"), cookies),
+	} {
+		if rec.Code != http.StatusSeeOther || strings.Contains(rec.Header().Get("Location"), "/runs/") {
+			t.Errorf("%s: %d to %q, want 303 back where it came from", name, rec.Code, rec.Header().Get("Location"))
 		}
 	}
+	big := bytes.Repeat([]byte("ABC1D23\n"), 2<<20)
+	if rec := s.postFile(t, base, "file", "big.csv", big, cookies); rec.Code != http.StatusSeeOther || strings.Contains(rec.Header().Get("Location"), "/runs/") {
+		t.Errorf("a file over the limit: %d to %q", rec.Code, rec.Header().Get("Location"))
+	}
+	if s.pending(t) != 0 {
+		t.Error("a rejected upload queued a job")
+	}
+}
 
-	if !sort.StringsAreSorted(names) {
-		t.Fatalf("the migrations are not returned in the order their names sort in: %v", names)
+func TestTheModuleRegistersItsRoutesUnderItsPrefixAndNeverUnderTheFrameworks(t *testing.T) {
+	w := install(t)
+	for _, prefix := range []string{"/_arandu", "/_arandu/imports"} {
+		cfg := w.module
+		_ = cfg
+		_, err := imports.New(imports.Config{Definitions: []imports.Definition{w.store.definition()}, Queue: w.jobs, Files: w.disk, Prefix: prefix}, w.db, w.sessions)
+		if err == nil {
+			t.Errorf("the prefix %s was accepted", prefix)
+		}
+	}
+	urls := w.module.URLs()
+	for name, got := range map[string]string{
+		urls.Index(): "/imports", urls.Definition("a b"): "/imports/a%20b", urls.Template("plates", "csv"): "/imports/plates/template/csv",
+		urls.Run("plates", "r1"): "/imports/plates/runs/r1", urls.Progress("plates", "r1"): "/imports/plates/runs/r1/progress",
+		urls.Refused("plates", "r1"): "/imports/plates/runs/r1/refused", urls.File("plates", "r1"): "/imports/plates/runs/r1/file",
+		urls.Export("plates"): "/imports/plates/export",
+	} {
+		if name != got {
+			t.Errorf("url %q, want %q", name, got)
+		}
+	}
+	pt := imports.NewURLs("/painel/importacoes", imports.PortuguesePaths)
+	if pt.Run("plates", "r1") != "/painel/importacoes/plates/execucoes/r1" || pt.Confirm("plates", "r1") != "/painel/importacoes/plates/execucoes/r1/confirmar" {
+		t.Errorf("portuguese urls: %s %s", pt.Run("plates", "r1"), pt.Confirm("plates", "r1"))
 	}
 }

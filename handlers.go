@@ -80,7 +80,7 @@ func (m *Module) listPage(ctx *fhttp.Context, who security.Subject, def *Definit
 		for _, run := range page.Rows {
 			items = append(items, NewResource(*run).ToArray())
 		}
-		return ctx.JSON(stdhttp.StatusOK, payload{"data": map[string]any{"items": items, "total": page.Total, "page": page.Page, "pages": page.Pages}})
+		return ctx.JSON(stdhttp.StatusOK, payload{"items": items, "total": page.Total, "page": page.Page, "pages": page.Pages})
 	}
 	title := m.Labels().T("screen.index_title")
 	if def != nil {
@@ -106,7 +106,7 @@ func (m *Module) upload(ctx *fhttp.Context) error {
 		return err
 	}
 	if ctx.WantsJSON() {
-		return ctx.JSON(stdhttp.StatusCreated, payload{"data": NewResource(*run).ToArray()})
+		return ctx.JSON(stdhttp.StatusCreated, NewResource(*run))
 	}
 	return ctx.Redirect(m.URLs().Run(run.Definition, run.ID))
 }
@@ -139,7 +139,7 @@ func (m *Module) export(ctx *fhttp.Context) error {
 		return err
 	}
 	if ctx.WantsJSON() {
-		return ctx.JSON(stdhttp.StatusCreated, payload{"data": NewResource(*run).ToArray()})
+		return ctx.JSON(stdhttp.StatusCreated, NewResource(*run))
 	}
 	return ctx.Redirect(m.URLs().Run(run.Definition, run.ID))
 }
@@ -151,7 +151,7 @@ func (m *Module) show(ctx *fhttp.Context) error {
 		return err
 	}
 	if ctx.WantsJSON() {
-		return ctx.JSON(stdhttp.StatusOK, payload{"data": NewResource(*run).ToArray()})
+		return ctx.JSON(stdhttp.StatusOK, NewResource(*run))
 	}
 	sc, err := m.screen(ctx, who, m.Labels().T("screen.show_title"))
 	if err != nil {
@@ -183,7 +183,7 @@ func (m *Module) confirm(ctx *fhttp.Context) error {
 		return err
 	}
 	if ctx.WantsJSON() {
-		return ctx.JSON(stdhttp.StatusAccepted, payload{"data": NewResource(*run).ToArray()})
+		return ctx.JSON(stdhttp.StatusAccepted, NewResource(*run))
 	}
 	return ctx.Redirect(m.URLs().Run(run.Definition, run.ID))
 }
