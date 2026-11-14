@@ -16,6 +16,15 @@ import (
 // once, beside the code that fills it.
 type IndexData = imports.IndexPageData
 
+// kindOf is what the history says of a run's kind: on the page of one definition
+// the definition is known, and the overview names it.
+func kindOf(data IndexData, r imports.RunRow) string {
+	if data.Definition != nil {
+		return r.KindLabel
+	}
+	return r.DefinitionLabel + " · " + r.KindLabel
+}
+
 // runsTable is the history, paged, filtered, searched and ordered by the
 // server. Each row opens the run.
 func runsTable(data IndexData) components.DataTableProps {
@@ -23,7 +32,7 @@ func runsTable(data IndexData) components.DataTableProps {
 	for _, r := range data.Rows {
 		rows = append(rows, components.TableRow{Key: r.ID, Cells: []components.TableCell{
 			{HTML: components.Link(components.LinkProps{Label: r.FileName, URL: r.URL, Variant: "hover"})},
-			{Text: r.DefinitionLabel + " · " + r.KindLabel},
+			{Text: kindOf(data, r)},
 			{HTML: components.Badge(components.BadgeProps{Label: r.Status, Variant: r.StatusVariant})},
 			{Text: r.Result},
 			{Text: r.When},
@@ -40,7 +49,7 @@ func runsTable(data IndexData) components.DataTableProps {
 		},
 		Columns: []components.TableColumn{
 			{Label: data.Labels.T("field.name"), Key: "file_name", Sortable: true, Primary: true},
-			{Label: data.Labels.T("field.definition"), Key: "definition", Sortable: true, Hideable: true},
+			{Label: data.Labels.T("field.kind"), Key: "definition", Sortable: true, Hideable: true},
 			{Label: data.Labels.T("field.status"), Key: "status", Sortable: true},
 			{Label: data.Labels.T("field.result"), Hideable: true},
 			{Label: data.Labels.T("field.when"), Key: "created_at", Sortable: true},

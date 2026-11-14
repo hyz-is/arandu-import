@@ -79,7 +79,7 @@ func itoa(n int) string { return imports.Itoa(n) }
 			</div>
 			<div class="grid min-w-0 gap-2">
 				<h3 class="text-sm font-semibold">{{ .Labels.T("screen.first_rows") }}</h3>
-				{!! components.DataTable(lineTable(., "import-sample", .Labels.T("screen.first_rows"), .Sample, true)) !!}
+				{!! components.DataTable(lineTable(., "import-sample", .Labels.T("screen.first_rows"), .Sample, false)) !!}
 			</div>
 			@if(.Invalid > 0)
 				<div class="grid min-w-0 gap-2">

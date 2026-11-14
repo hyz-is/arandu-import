@@ -10,6 +10,12 @@ a release is corrected by another release and never by moving a tag.
 
 ## [Unreleased]
 
+### Changed
+
+- The published preview lists the first rows without a column of reasons (the
+  refused rows have their own list under it), and the history of one definition
+  names the kind of run instead of repeating the definition.
+
 ## [0.1.0] - 2026-11-14
 
 ### Added
