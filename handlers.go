@@ -46,6 +46,10 @@ func (m *Module) handlers() map[string]func(*fhttp.Context) error {
 // of the space.
 func (m *Module) index(ctx *fhttp.Context) error {
 	who, _ := ctx.User()
+	who, err := m.scoped(ctx, who)
+	if err != nil {
+		return err
+	}
 	p := listParams(ctx)
 	page, err := m.service.List(ctx.Ctx(), who, p.query("", m.cfg.PageSize))
 	if err != nil {
@@ -57,6 +61,10 @@ func (m *Module) index(ctx *fhttp.Context) error {
 // definitionPage is the page of one definition.
 func (m *Module) definitionPage(ctx *fhttp.Context) error {
 	who, _ := ctx.User()
+	who, err := m.scoped(ctx, who)
+	if err != nil {
+		return err
+	}
 	def, err := m.service.definition(ctx.Param("definition"))
 	if err != nil {
 		return err
@@ -95,6 +103,10 @@ func (m *Module) listPage(ctx *fhttp.Context, who security.Subject, def *Definit
 
 func (m *Module) upload(ctx *fhttp.Context) error {
 	who, _ := ctx.User()
+	who, err := m.scoped(ctx, who)
+	if err != nil {
+		return err
+	}
 	key := ctx.Param("definition")
 	file, name, done, err := m.readFile(ctx)
 	if err != nil {
@@ -113,6 +125,10 @@ func (m *Module) upload(ctx *fhttp.Context) error {
 
 func (m *Module) template(ctx *fhttp.Context) error {
 	who, _ := ctx.User()
+	who, err := m.scoped(ctx, who)
+	if err != nil {
+		return err
+	}
 	var buf strings.Builder
 	name, kind, err := m.service.Template(ctx.Ctx(), who, ctx.Param("definition"), ctx.Param("format"), &buf)
 	if err != nil {
@@ -131,6 +147,10 @@ func (m *Module) template(ctx *fhttp.Context) error {
 
 func (m *Module) export(ctx *fhttp.Context) error {
 	who, _ := ctx.User()
+	who, err := m.scoped(ctx, who)
+	if err != nil {
+		return err
+	}
 	if err := ctx.Request.ParseForm(); err != nil {
 		return validation.Errors{"format": {m.Labels().message("format")}}
 	}
@@ -146,6 +166,10 @@ func (m *Module) export(ctx *fhttp.Context) error {
 
 func (m *Module) show(ctx *fhttp.Context) error {
 	who, _ := ctx.User()
+	who, err := m.scoped(ctx, who)
+	if err != nil {
+		return err
+	}
 	run, err := m.service.Find(ctx.Ctx(), who, ctx.Param("definition"), ctx.Param("id"))
 	if err != nil {
 		return err
@@ -164,6 +188,10 @@ func (m *Module) show(ctx *fhttp.Context) error {
 // every second while the run is going and stops asking when it is over.
 func (m *Module) progress(ctx *fhttp.Context) error {
 	who, _ := ctx.User()
+	who, err := m.scoped(ctx, who)
+	if err != nil {
+		return err
+	}
 	run, err := m.service.Find(ctx.Ctx(), who, ctx.Param("definition"), ctx.Param("id"))
 	if err != nil {
 		return err
@@ -178,6 +206,10 @@ func (m *Module) progress(ctx *fhttp.Context) error {
 
 func (m *Module) confirm(ctx *fhttp.Context) error {
 	who, _ := ctx.User()
+	who, err := m.scoped(ctx, who)
+	if err != nil {
+		return err
+	}
 	run, err := m.service.Confirm(ctx.Ctx(), who, ctx.Param("definition"), ctx.Param("id"))
 	if err != nil {
 		return err
@@ -190,6 +222,10 @@ func (m *Module) confirm(ctx *fhttp.Context) error {
 
 func (m *Module) discard(ctx *fhttp.Context) error {
 	who, _ := ctx.User()
+	who, err := m.scoped(ctx, who)
+	if err != nil {
+		return err
+	}
 	key := ctx.Param("definition")
 	if err := m.service.Discard(ctx.Ctx(), who, key, ctx.Param("id")); err != nil {
 		return err
@@ -203,6 +239,10 @@ func (m *Module) discard(ctx *fhttp.Context) error {
 
 func (m *Module) refused(ctx *fhttp.Context) error {
 	who, _ := ctx.User()
+	who, err := m.scoped(ctx, who)
+	if err != nil {
+		return err
+	}
 	_, body, err := m.service.Open(ctx.Ctx(), who, ctx.Param("definition"), ctx.Param("id"), true)
 	if err != nil {
 		return err
@@ -212,6 +252,10 @@ func (m *Module) refused(ctx *fhttp.Context) error {
 
 func (m *Module) file(ctx *fhttp.Context) error {
 	who, _ := ctx.User()
+	who, err := m.scoped(ctx, who)
+	if err != nil {
+		return err
+	}
 	_, body, err := m.service.Open(ctx.Ctx(), who, ctx.Param("definition"), ctx.Param("id"), false)
 	if err != nil {
 		return err
@@ -342,3 +386,12 @@ func (p payload) ToArray() map[string]any { return p }
 
 // With returns nothing beside them.
 func (p payload) With() map[string]any { return nil }
+
+// scoped is the subject acting in the space the person works in: the session's
+// subject, or what Config.Scope made of it.
+func (m *Module) scoped(ctx *fhttp.Context, who security.Subject) (security.Subject, error) {
+	if m.cfg.Scope == nil {
+		return who, nil
+	}
+	return m.cfg.Scope(ctx, who)
+}

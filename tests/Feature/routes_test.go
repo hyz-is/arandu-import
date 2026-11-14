@@ -54,10 +54,12 @@ type site struct {
 	router *fhttp.Router
 }
 
-func mount(t *testing.T) site {
+func mount(t *testing.T) site { return mountWith(t, nil) }
+
+func mountWith(t *testing.T, change func(*imports.Config)) site {
 	t.Helper()
 	stubViews()
-	w := install(t)
+	w := installWith(t, change)
 	w.sessions.ResolveSubjects(func(_ context.Context, who security.Subject) (security.Subject, error) {
 		if s, ok := signedIn.Load(who.Tenant + "/" + who.ID); ok {
 			return s.(security.Subject), nil
@@ -318,4 +320,61 @@ func TestTheModuleRegistersItsRoutesUnderItsPrefixAndNeverUnderTheFrameworks(t *
 	if pt.Run("plates", "r1") != "/painel/importacoes/plates/execucoes/r1" || pt.Confirm("plates", "r1") != "/painel/importacoes/plates/execucoes/r1/confirmar" {
 		t.Errorf("portuguese urls: %s %s", pt.Run("plates", "r1"), pt.Confirm("plates", "r1"))
 	}
+}
+
+func TestTheActingSubjectIsTheOneTheApplicationScopesTheSessionTo(t *testing.T) {
+	// The person signs in as themselves, with no action. The application says
+	// which space they work in and what they may do there: the module acts as
+	// that subject, in that tenant, and nothing a request says changes it.
+	selected := "globex"
+	s := mountWith(t, func(cfg *imports.Config) {
+		cfg.Scope = func(_ *fhttp.Context, who security.Subject) (security.Subject, error) {
+			who.Tenant, who.Actions = selected, []security.Action{importAction}
+			return who, nil
+		}
+	})
+	cookies := s.signIn(t, who("acme", "viviane"))
+
+	rec := s.postFile(t, base, "file", "a.csv", []byte("Placa\nABC1D23\n"), cookies)
+	if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "/runs/") {
+		t.Fatalf("an upload as the scoped subject: %d %q", rec.Code, rec.Body.String())
+	}
+	runURL := rec.Header().Get("Location")
+	if got := s.get(t, runURL, cookies); got.Code != 200 {
+		t.Errorf("the run of the space the person selected: %d", got.Code)
+	}
+	if n := runsOf(t, s.world, "globex"); n != 1 {
+		t.Errorf("the run is in globex %d times, want once", n)
+	}
+	if n := runsOf(t, s.world, "acme"); n != 0 {
+		t.Errorf("the session's own tenant has %d runs: the request chose where it is written", n)
+	}
+
+	// Another selection in the same session: the run is not found there.
+	selected = "initech"
+	if got := s.get(t, runURL, cookies); got.Code != http.StatusNotFound {
+		t.Errorf("the run seen from another selected space: %d, want 404", got.Code)
+	}
+}
+
+func TestAScopeThatFailsStopsTheRequest(t *testing.T) {
+	s := mountWith(t, func(cfg *imports.Config) {
+		cfg.Scope = func(*fhttp.Context, security.Subject) (security.Subject, error) {
+			return security.Subject{}, security.ErrForbidden
+		}
+	})
+	cookies := s.signIn(t, ana)
+	if rec := s.get(t, base, cookies); rec.Code != http.StatusForbidden {
+		t.Errorf("a failed scope: %d, want 403", rec.Code)
+	}
+}
+
+// runsOf counts the runs a tenant holds, through the service.
+func runsOf(t *testing.T, w *world, tenant string) int {
+	t.Helper()
+	page, err := w.service.List(context.Background(), who(tenant, "counter", importAction), imports.ListQuery{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return page.Total
 }

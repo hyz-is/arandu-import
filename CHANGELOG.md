@@ -42,4 +42,9 @@ a release is corrected by another release and never by moving a tag.
   a read-only form (`ViewOf`), so listing a run or downloading a report cannot
   start an import. The package declares one action of its own, `CleanAction`,
   issued to the scheduler.
+- `Config.Scope`, for an application where a person belongs to several spaces:
+  it answers the subject scoped to the space they selected, and the module acts
+  as that subject, in that tenant.
+- `Definition.ListURL`, where the application lists the records: the page of the
+  definition links back to it.
 - `pt-BR` and `en` catalogues and `PortuguesePaths`.

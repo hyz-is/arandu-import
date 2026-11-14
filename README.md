@@ -169,6 +169,7 @@ the import. No script and no style is inline: the drop area is Kyse's
 | `Files` | yes | the Disk for the uploads, the reports and the exports |
 | `Prefix` | no | where the routes are mounted. Defaults to `/imports` |
 | `Paths` | no | the segments under the prefix. `PortuguesePaths` is shipped |
+| `Scope` | no | turns the session's subject into the subject acting in the space the person selected, for an application where one person belongs to several. Nil acts as the session's subject |
 | `Middleware` | no | wraps every route, after `RequireAuth` |
 | `Activity` | no | the activity log: the start and the end of every run, with counts |
 | `OnChange` | no | told after every progress write, to tell a live table |

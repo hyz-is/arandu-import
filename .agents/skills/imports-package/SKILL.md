@@ -127,6 +127,7 @@ from then on: its layout, its page head, its words.
 | `Files` | yes | the Disk for the uploads, the reports and the exports |
 | `Prefix` | no | where the routes are mounted. Defaults to `/imports` |
 | `Paths` | no | the segments under the prefix. `PortuguesePaths` is shipped |
+| `Scope` | no | the subject acting in the space the person selected (an application with several spaces per person) |
 | `Activity` | no | the activity log; the start and the end of every run, with counts |
 | `MaxFileBytes` | no | the largest upload. Defaults to 10 MB, refused above 50 MB |
 | `RetentionDays` | no | how long the files are kept. Defaults to 7, refused above 90 |

@@ -146,6 +146,15 @@ type Config struct {
 	// "Importar placas — Alpr.sh". Empty writes the title alone.
 	TitleSeparator string
 
+	// Scope turns the subject of the session into the subject acting in the
+	// space the person works in. An application where one person belongs to
+	// several spaces (an organization they selected) answers the subject scoped
+	// to the selected one, with that space's actions: the tenant of every
+	// statement is the one the Grant of that subject carries, and never one a
+	// request named. Nil acts as the session's subject, which is right for an
+	// application whose session already is the space.
+	Scope func(ctx *fhttp.Context, who security.Subject) (security.Subject, error)
+
 	// Chrome draws the application's frame around a screen: it returns what the
 	// application's layout reads from the screen. Nil leaves the layout to the
 	// page alone.
