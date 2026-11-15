@@ -157,7 +157,7 @@ and import the directory it wrote into, with the other imports:
 
 Without that import the module refuses to boot, naming the view, the command and
 the import. No script and no style is inline: the drop area is Kyse's
-`file-upload` behaviour and the progress follows with htmx, both served from
+`file-upload` behaviour and the progress follows with YPY, both served from
 `'self'`. The file is sent by the button under the area, after its name is shown.
 
 ## The name of the chosen file

@@ -206,23 +206,23 @@ func TestTheWholeFlowThroughTheRoutes(t *testing.T) {
 		t.Errorf("the preview page: %d %q", rec.Code, rec.Body.String())
 	}
 
-	// A browser that has scripts sends the same upload as an htmx request and
+	// A browser that has scripts sends the same upload as a YPY request and
 	// is told where to go.
-	rec = s.postFile(t, base, "file", "placas.csv", []byte("Placa\nXYZ9K88\n"), cookies, "HX-Request", "true")
-	if rec.Header().Get("HX-Redirect") == "" {
-		t.Errorf("an htmx upload was not redirected: %d %v", rec.Code, rec.Header())
+	rec = s.postFile(t, base, "file", "placas.csv", []byte("Placa\nXYZ9K88\n"), cookies, "YPY-Request", "true")
+	if rec.Header().Get("YPY-Redirect") == "" {
+		t.Errorf("a YPY upload was not redirected: %d %v", rec.Code, rec.Header())
 	}
 
 	// Confirm queues, the page polls, the fragment is the state alone.
 	if rec := s.post(t, runURL+"/confirm", nil, cookies); rec.Code != http.StatusSeeOther {
 		t.Fatalf("confirm: %d", rec.Code)
 	}
-	if rec := s.get(t, runURL+"/progress", cookies, "HX-Request", "true"); rec.Code != 200 ||
+	if rec := s.get(t, runURL+"/progress", cookies, "YPY-Request", "true"); rec.Code != 200 ||
 		!strings.Contains(rec.Body.String(), "queued polling=true") || rec.Header().Get("Cache-Control") != "private, no-store" {
 		t.Errorf("progress while queued: %d %q %v", rec.Code, rec.Body.String(), rec.Header())
 	}
 	s.work(t)
-	if rec := s.get(t, runURL+"/progress", cookies, "HX-Request", "true"); !strings.Contains(rec.Body.String(), "done polling=false") {
+	if rec := s.get(t, runURL+"/progress", cookies, "YPY-Request", "true"); !strings.Contains(rec.Body.String(), "done polling=false") {
 		t.Errorf("progress once done must stop polling: %q", rec.Body.String())
 	}
 

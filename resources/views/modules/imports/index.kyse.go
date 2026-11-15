@@ -112,8 +112,8 @@ func runsTable(data IndexData) components.DataTableProps {
 				{!! components.FileUpload(components.FileUploadProps{ComponentProps: components.ComponentProps{Parts: components.Parts{"dropzone": {Class: "w-full"}}}, Name: "file", ID: "import-file", Label: .Labels.T("field.file"), Accept: .Accept, Prompt: .Labels.T("screen.upload_prompt"), Hint: .UploadHint(), Required: true, Page: .Form()}) !!}
 				<div class="flex flex-wrap items-center gap-2">
 					{!! components.Button(components.ButtonProps{Label: .Labels.T("control.upload"), Type: "submit"}) !!}
-					<a class="btn" data-variant="outline" href="{{ .TemplateXLSX }}" hx-boost="false">{{ .Labels.T("control.template_xlsx") }}</a>
-					<a class="btn" data-variant="outline" href="{{ .TemplateCSV }}" hx-boost="false">{{ .Labels.T("control.template_csv") }}</a>
+					<a class="btn" data-variant="outline" href="{{ .TemplateXLSX }}" ypy-boost="false">{{ .Labels.T("control.template_xlsx") }}</a>
+					<a class="btn" data-variant="outline" href="{{ .TemplateCSV }}" ypy-boost="false">{{ .Labels.T("control.template_csv") }}</a>
 				</div>
 			</form>
 

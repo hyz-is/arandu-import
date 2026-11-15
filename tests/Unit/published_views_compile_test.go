@@ -209,12 +209,12 @@ func main() {
 			[]string{"Confira antes de importar", "placas.xlsx", "Prontas para importar", "Serão recusadas", "Placa", "← Placas", "não encontrada",
 				"A primeira linha foi lida como cabeçalho.", "Colunas ignoradas: Cor.", "ABC1D23", "Placa inválida", "Linhas com problema", "e mais 1 linhas",
 				"Importar agora", "/painel/importacoes/lista/r1/confirmar", "Descartar", "/painel/importacoes/lista/r1/descartar", "_token",
-				"Enviada em 13/11/2026 12:00", "Importação"}, []string{"hx-trigger", "Baixar recusadas"}},
+				"Enviada em 13/11/2026 12:00", "Importação"}, []string{"ypy-trigger", "Baixar recusadas"}},
 		{imports.ViewShow, state(run("Aguardando confirmação", "uploaded", nil), func(d *imports.ShowPageData) { d.Valid, d.Invalid = 0, 10; d.CanConfirm = true }),
 			[]string{"Nenhuma linha está pronta para importar"}, []string{"Importar agora"}},
 		{imports.ViewShow, state(run("Em andamento", "running", func(r *imports.RunRow) { r.Active, r.Processed, r.Percent = true, 4, 40 }),
 			func(d *imports.ShowPageData) { d.Polling = true }),
-			[]string{"Importando", "4 de 10 linhas lidas.", "hx-get=\"/painel/importacoes/lista/r1/progresso\"", "every 1s", "role=\"progressbar\""}, []string{"Importar agora"}},
+			[]string{"Importando", "4 de 10 linhas lidas.", "ypy-get=\"/painel/importacoes/lista/r1/progresso\"", "every 1s", "role=\"progressbar\""}, []string{"Importar agora"}},
 		{imports.ViewState, state(run("Concluída", "done", func(r *imports.RunRow) {
 			r.IsFinished, r.Created, r.Updated, r.Unchanged, r.Refused, r.Processed, r.Percent, r.Finished = true, 5, 2, 1, 2, 10, 100, "13/11/2026 12:01"
 		}), func(d *imports.ShowPageData) {
@@ -222,13 +222,13 @@ func main() {
 			d.Problems = []imports.LineRow{line(4, "XYZ", "x", "Placa inválida"), line(9, "", "y", "Placa inválida")}
 		}),
 			[]string{"Importação concluída", "Novas", "Atualizadas", "Sem mudança", "Recusadas", "Linhas recusadas", "Placa inválida", "Baixar recusadas (CSV)",
-				"/painel/importacoes/lista/r1/recusadas", "Importar outro arquivo"}, []string{"hx-trigger", "Importar agora"}},
+				"/painel/importacoes/lista/r1/recusadas", "Importar outro arquivo"}, []string{"ypy-trigger", "Importar agora"}},
 		{imports.ViewState, state(run("Falhou", "failed", nil), func(d *imports.ShowPageData) { d.Failure = "Não conseguimos ler o arquivo enviado. Envie de novo." }),
-			[]string{"Não deu para concluir", "Não conseguimos ler o arquivo enviado."}, []string{"hx-trigger"}},
+			[]string{"Não deu para concluir", "Não conseguimos ler o arquivo enviado."}, []string{"ypy-trigger"}},
 		{imports.ViewState, state(run("Descartada", "discarded", nil), nil), []string{"Importação descartada", "nada foi gravado"}, nil},
 		{imports.ViewState, state(run("Em andamento", "running", func(r *imports.RunRow) { r.Active, r.IsImport, r.IsExport, r.Kind = true, false, true, "export" }),
 			func(d *imports.ShowPageData) { d.Polling, d.Indeterminate = true, true }),
-			[]string{"Gerando o arquivo", "hx-get"}, nil},
+			[]string{"Gerando o arquivo", "ypy-get"}, nil},
 		{imports.ViewState, state(run("Concluída", "done", func(r *imports.RunRow) {
 			r.IsImport, r.IsExport, r.Kind, r.IsFinished, r.Total, r.Format, r.Size = false, true, "export", true, 42, "XLSX", "3 KB"
 		}), func(d *imports.ShowPageData) { d.HasFile = true }),

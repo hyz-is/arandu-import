@@ -44,7 +44,7 @@ func itoa(n int) string { return imports.Itoa(n) }
 
 <div id="import-state" class="grid min-w-0 gap-6" aria-live="polite"
 	@if(.Polling)
-		hx-get="{{ .ProgressURL }}" hx-trigger="every 1s" hx-target="this" hx-swap="outerHTML"
+		ypy-get="{{ .ProgressURL }}" ypy-trigger="every 1s" ypy-target="this" ypy-swap="outerHTML"
 	@endif
 >
 	@if(.Run.StatusKey == "uploaded")
@@ -140,7 +140,7 @@ func itoa(n int) string { return imports.Itoa(n) }
 			<p class="text-muted-foreground text-sm">{{ .ExportDoneLead() }}</p>
 			<div class="flex flex-wrap items-center gap-2">
 				@if(.HasFile)
-					<a class="btn" href="{{ .FileURL }}" hx-boost="false">{{ .Labels.T("control.download_file") }} ({{ .Run.Format }}, {{ .Run.Size }})</a>
+					<a class="btn" href="{{ .FileURL }}" ypy-boost="false">{{ .Labels.T("control.download_file") }} ({{ .Run.Format }}, {{ .Run.Size }})</a>
 				@else
 					<p class="text-muted-foreground text-sm">{{ .Labels.T("screen.files_gone") }}</p>
 				@endif
@@ -165,7 +165,7 @@ func itoa(n int) string { return imports.Itoa(n) }
 			@endif
 			<div class="flex flex-wrap items-center gap-2">
 				@if(.HasReport)
-					<a class="btn" href="{{ .RefusedURL }}" hx-boost="false">{{ .Labels.T("control.download_refused") }}</a>
+					<a class="btn" href="{{ .RefusedURL }}" ypy-boost="false">{{ .Labels.T("control.download_refused") }}</a>
 				@endif
 				<a class="btn" data-variant="outline" href="{{ .BackURL }}">{{ .Labels.T("control.new_import") }}</a>
 			</div>
