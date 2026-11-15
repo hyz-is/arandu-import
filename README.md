@@ -40,7 +40,7 @@ go get github.com/hyz-is/arandu-import
 
 An Arandu application registers a module explicitly. There is no service
 provider, no container and no discovery, so these are the lines to paste into
-`bootstrap/app.go` and there are no others.
+`bootstrap/app.go`, and the views add one import below.
 
 The import, with the other module imports:
 
@@ -50,8 +50,11 @@ import (
 )
 ```
 
-The construction, in `Build`, after the session store, the queue and the disk
-exist and before `k.Register`:
+The construction, in `App`, once `NewAppServiceProvider` has returned and the
+queue and the disk exist. `New` refuses a wiring that cannot work and
+`Configure` has no way to return that error, so the module is built where the
+error can leave; the database and the session store are the ones the framework
+built from the configuration:
 
 ```go
 	importsModule, err := imports.New(imports.Config{
@@ -59,16 +62,20 @@ exist and before `k.Register`:
 		Queue:       queue,
 		Files:       disk,
 		Activity:    activity.Logger(),
-	}, db, sessions)
+	}, drivers.DB, drivers.Sessions)
 	if err != nil {
-		return App{}, err
+		_ = drivers.Close()
+		return nil, err
 	}
 ```
 
-And the registration, inside the `k.Register(...)` call already there:
+And the registration, in the `WithProviders(...)` chain the builder is made of:
 
 ```go
-		importsModule,
+	return Configure(cfg, drivers, app).
+		WithProviders(importsModule).
+		WithVersion(version, commit).
+		Create()
 ```
 
 The module hands the worker its two jobs (`RegisterJobHandlers`) and the

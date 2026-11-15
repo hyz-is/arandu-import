@@ -44,8 +44,9 @@ import (
 // It implements foundation.Module, which is Name and Routes and nothing else.
 // It also implements foundation.Migratable, because it owns a table;
 // foundation.Publishable, because it hands view sources to the project;
-// foundation.Schedulable, because it declares the clean of the files; and the
-// job registration the framework reads from a module that has one.
+// foundation.Bootable, because it refuses to start while those views are not
+// linked; foundation.Schedulable, because it declares the clean of the files;
+// and the job registration the framework reads from a module that has one.
 type Module struct {
 	cfg      Config
 	service  *Service
